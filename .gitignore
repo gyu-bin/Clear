@@ -1,0 +1,7 @@
+build/
+.build/
+scripts/headless-tests/.build/
+xcuserdata/
+*.xcuserstate
+.DS_Store
+dist/
