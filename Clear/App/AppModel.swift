@@ -36,6 +36,9 @@ final class AppModel {
     var projectSelection: Set<String> = []
 
     private(set) var isScanningMac = false
+    /// Re-checked whenever the app becomes active (the user may have just granted it).
+    private(set) var hasFullDiskAccess = AppModel.checkFullDiskAccess()
+    private var activationObserver: NSObjectProtocol?
     private var tasks: [String: Task<Void, Never>] = [:]
     private var monitor: BackgroundMonitor?
     private static let log = Logger(subsystem: "com.mungyubin.clear", category: "app")
@@ -68,6 +71,62 @@ final class AppModel {
         if !isRunningTests {
             monitor = BackgroundMonitor(model: self)
             monitor?.start()
+        }
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshPermissions() }
+        }
+    }
+
+    // MARK: Permissions
+
+    /// Full Disk Access cannot be queried directly; reading a protected folder that
+    /// every account has is the standard probe. Reading does not trigger a prompt.
+    static func checkFullDiskAccess() -> Bool {
+        let home = PathUtilities.realHomeDirectory
+        for probe in [".Trash", "Library/Safari", "Library/Containers/com.apple.stocks"] {
+            if (try? FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent(probe).path)) != nil { return true }
+        }
+        return false
+    }
+
+    func refreshPermissions() {
+        hasFullDiskAccess = Self.checkFullDiskAccess()
+    }
+
+    func openFullDiskAccessSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    // MARK: Trash
+
+    /// Lists the Trash and opens the normal confirmation flow. Nothing is removed
+    /// until the user confirms (with an extra acknowledgement, since it is permanent).
+    func emptyTrash() {
+        guard !cleanup.isRunning else { return }
+        Task { @MainActor in
+            let ctx = await makeContext()
+            do {
+                let items = try await runOffMain { try TrashScanner().candidates(ctx) }
+                if items.isEmpty {
+                    cleanup.showMessage("휴지통이 비어 있습니다.")
+                } else {
+                    cleanup.review(title: "휴지통 비우기", candidates: items)
+                }
+            } catch {
+                cleanup.showMessage("휴지통을 읽을 수 없습니다. 시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근에서 Clear를 허용한 뒤 다시 시도하세요.")
+            }
+        }
+    }
+
+    private func refreshTrashSize() {
+        guard case .loaded(var report, let date) = general else { return }
+        let trash = PathUtilities.realHomeDirectory.appendingPathComponent(".Trash").path
+        if let size = try? DirectorySizer().measure(path: trash), size.inaccessibleCount == 0 {
+            report.trashSize = size
+            general = .loaded(report, date)
         }
     }
 
@@ -344,6 +403,7 @@ final class AppModel {
         developerSelection.subtract(done)
         aiSelection.subtract(done)
         projectSelection.subtract(done)
+        if report.results.contains(where: { $0.category == .trash }) || report.trashedBytes > 0 { refreshTrashSize() }
         applications.didFinishCleanup(done)
         duplicates.didFinishCleanup(done)
         refreshVolume()

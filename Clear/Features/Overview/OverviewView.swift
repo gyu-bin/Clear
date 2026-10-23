@@ -10,6 +10,9 @@ struct OverviewView: View {
                     .help("저장공간과 정리 후보를 다시 분석합니다 (읽기 전용)")
             }
         } content: {
+            if !model.hasFullDiskAccess && !model.settings.fullDiskAccessNoticeDismissed {
+                FullDiskAccessNotice()
+            }
             HeroSection()
             Divider()
             DiskSection()
@@ -261,13 +264,41 @@ private struct FooterSection: View {
                 MetricView(title: "최근 정리", value: "기록 없음", font: ClearFont.body.weight(.medium))
             }
             if let trash = model.general.value?.trashSize {
-                MetricView(title: "휴지통", value: trash.allocated.formattedBytes,
-                           detail: trash.allocated > 0 ? "비워야 공간이 확보됩니다" : nil, font: ClearFont.body.weight(.medium))
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    MetricView(title: "휴지통", value: trash.allocated.formattedBytes, font: ClearFont.body.weight(.medium))
+                    if trash.allocated > 0 {
+                        Button("휴지통 비우기…") { model.emptyTrash() }.buttonStyle(.link).font(ClearFont.caption)
+                    }
+                }
             }
             if let date = model.general.date {
                 MetricView(title: "마지막 스캔", value: date.formatted(date: .omitted, time: .shortened), font: ClearFont.body.weight(.medium))
             }
             Spacer()
         }
+    }
+}
+
+/// Shown once until granted or dismissed: one Full Disk Access grant replaces the
+/// per-folder prompts and enables emptying the Trash.
+private struct FullDiskAccessNotice: View {
+    @Environment(\.appModel) private var model
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Space.m) {
+            Image(systemName: "lock.shield").font(.system(size: 18)).foregroundStyle(ClearColor.accentBright)
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text("전체 디스크 접근을 한 번만 허용하세요").font(ClearFont.headline)
+                Text("허용하면 문서·데스크탑 같은 폴더마다 접근을 묻지 않고, 휴지통 비우기와 앱 데이터 분석이 정확해집니다. 시스템 설정에서 Clear를 켠 뒤 이 화면으로 돌아오면 바로 적용됩니다.")
+                    .font(ClearFont.callout).foregroundStyle(ClearColor.textSecondary).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: Space.s) {
+                    Button("시스템 설정 열기") { model.openFullDiskAccessSettings() }.primaryButton()
+                    Button("나중에") { model.settingsStore.settings.fullDiskAccessNoticeDismissed = true }.buttonStyle(.borderless)
+                }
+                .padding(.top, Space.xs)
+            }
+            Spacer()
+        }
+        .panel()
     }
 }

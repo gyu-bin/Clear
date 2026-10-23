@@ -41,6 +41,7 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
     case appLeftover
     case duplicate
     case similarPhoto
+    case trash
 
     var title: String {
         switch self {
@@ -68,6 +69,7 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
         case .appLeftover: "앱 관련 파일"
         case .duplicate: "중복 파일"
         case .similarPhoto: "비슷한 사진"
+        case .trash: "휴지통"
         }
     }
 
@@ -97,12 +99,13 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
         case .appLeftover: "folder.badge.questionmark"
         case .duplicate: "doc.on.doc"
         case .similarPhoto: "photo.on.rectangle"
+        case .trash: "trash"
         }
     }
 
     var domain: CleanupDomain {
         switch self {
-        case .appCache, .systemCache, .logs, .temporary, .savedState, .downloads: .general
+        case .appCache, .systemCache, .logs, .temporary, .savedState, .downloads, .trash: .general
         case .xcode, .simulator, .swiftPackages, .node, .expo, .gradle, .android, .homebrew, .docker: .developer
         case .projectBuild, .projectDependencies: .projects
         case .aiCache, .aiLogs, .aiModels: .aiTools

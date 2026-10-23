@@ -57,6 +57,8 @@ struct CleanupPlanner: Sendable {
             let method: RemovalMethod
             if case .command = c.target {
                 method = .permanent
+            } else if c.category == .trash {
+                method = .permanent
             } else if c.allowsPermanentRemoval && c.regenerable && !preferTrash && c.preferredMethod == .permanent {
                 method = .permanent
             } else {
@@ -66,7 +68,10 @@ struct CleanupPlanner: Sendable {
         }
 
         var warnings: [String] = []
-        if items.contains(where: { !$0.candidate.regenerable }) {
+        if items.contains(where: { $0.candidate.category == .trash }) {
+            warnings.append("휴지통의 항목은 영구 삭제되며 되돌릴 수 없습니다.")
+        }
+        if items.contains(where: { !$0.candidate.regenerable && $0.method == .trash }) {
             warnings.append("재생성되지 않는 데이터가 포함되어 있습니다. 휴지통에서 복구할 수 있습니다.")
         }
         if items.contains(where: { $0.method == .trash && !$0.isCommand }) {

@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.appModel) private var model
-    @State private var fullDiskAccess = SettingsView.hasFullDiskAccess()
 
     var body: some View {
         @Bindable var store = model.settingsStore
@@ -118,28 +117,20 @@ struct SettingsView: View {
 
             Section {
                 LabeledContent("전체 디스크 접근") {
-                    Label(fullDiskAccess ? "허용됨" : "허용 안 됨", systemImage: fullDiskAccess ? "checkmark.circle.fill" : "minus.circle")
-                        .foregroundStyle(fullDiskAccess ? ClearColor.success : ClearColor.textSecondary)
+                    Label(model.hasFullDiskAccess ? "허용됨" : "허용 안 됨", systemImage: model.hasFullDiskAccess ? "checkmark.circle.fill" : "minus.circle")
+                        .foregroundStyle(model.hasFullDiskAccess ? ClearColor.success : ClearColor.textSecondary)
                 }
                 Button("개인정보 보호 및 보안 설정 열기") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") { NSWorkspace.shared.open(url) }
                 }
-                Button("권한 상태 다시 확인") { fullDiskAccess = Self.hasFullDiskAccess() }
+                Button("권한 상태 다시 확인") { model.refreshPermissions() }
             } header: {
                 Text("권한")
             } footer: {
-                Text("Clear는 App Sandbox 없이 실행되는 개인용 앱이며 관리자 권한(sudo)을 요청하지 않습니다. 전체 디스크 접근은 선택 사항이며, 허용하지 않으면 일부 위치가 ‘접근 제한’으로 표시됩니다. 데이터는 외부로 전송되지 않습니다.")
+                Text("전체 디스크 접근을 한 번 허용하면 문서·데스크탑 등 폴더마다 접근을 묻지 않고, 휴지통 비우기도 사용할 수 있습니다. 허용하지 않아도 다른 기능은 동작하며 일부 위치는 ‘접근 제한’으로 표시됩니다. Clear는 관리자 권한(sudo)을 요청하지 않고, 데이터를 외부로 보내지 않습니다.")
             }
         }
         .formStyle(.grouped)
         .navigationTitle("설정")
-    }
-
-    /// Probes a TCC-protected location that every account has.
-    static func hasFullDiskAccess() -> Bool {
-        let probe = PathUtilities.realHomeDirectory.appendingPathComponent("Library/Containers/com.apple.stocks").path
-        let alt = PathUtilities.realHomeDirectory.appendingPathComponent("Library/Safari").path
-        return (try? FileManager.default.contentsOfDirectory(atPath: alt)) != nil
-            || (try? FileManager.default.contentsOfDirectory(atPath: probe)) != nil
     }
 }

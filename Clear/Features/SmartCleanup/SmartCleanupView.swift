@@ -42,8 +42,14 @@ struct SmartCleanupView: View {
                     RiskSummary(candidates: report.candidates)
                     Spacer()
                     if let trash = report.trashSize, trash.allocated > 0 {
-                        MetricView(title: "휴지통 (직접 비워야 함)", value: trash.allocated.formattedBytes, font: ClearFont.figureSmall)
-                            .help("Clear는 휴지통을 비우지 않습니다. Finder에서 확인 후 비우세요.")
+                        VStack(alignment: .trailing, spacing: Space.xs) {
+                            MetricView(title: "휴지통", value: trash.allocated.formattedBytes, font: ClearFont.figureSmall)
+                            Button("휴지통 비우기…") { model.emptyTrash() }.secondaryButton()
+                                .help("휴지통의 항목을 영구 삭제합니다. 실행 전 확인 화면이 표시됩니다.")
+                        }
+                    } else if report.trashSize == nil {
+                        Button("휴지통 비우기…") { model.emptyTrash() }.secondaryButton()
+                            .help("휴지통을 읽으려면 전체 디스크 접근 권한이 필요합니다.")
                     }
                 }
                 HStack {

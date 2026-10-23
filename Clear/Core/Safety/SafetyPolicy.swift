@@ -40,7 +40,7 @@ struct SafetyPolicy: Sendable {
             p("Library/Caches"), p("Library/Logs"), p("Library/Saved Application State"),
             p("Library/Developer"), p("Downloads"),
             p(".npm"), p(".gradle"), p(".android"), p(".expo"), p(".cache"),
-            p("Library/pnpm/store"), p(".yarn/berry/cache"),
+            p("Library/pnpm/store"), p(".yarn/berry/cache"), p(".Trash"),
             p(".claude"), p(".codex"), p(".ollama"), p(".lmstudio"),
             p("Library/Application Support/Cursor"), p("Library/Application Support/Claude"),
             p("Library/Application Support/Code"),
@@ -70,7 +70,7 @@ struct SafetyPolicy: Sendable {
             (p(".claude"), "Claude Code 데이터 폴더"), (p(".codex"), "Codex 데이터 폴더"),
             (p(".ollama"), "Ollama 데이터 폴더"), (p(".lmstudio"), "LM Studio 데이터 폴더"),
             (p(".expo"), "Expo 데이터 폴더"), (p("Library/Developer/Xcode/UserData"), "Xcode 사용자 데이터 폴더"),
-            (temporaryDirectory.path, "임시 폴더 자체"),
+            (temporaryDirectory.path, "임시 폴더 자체"), (p(".Trash"), "휴지통 폴더 자체"),
         ]
         let subtrees: [(String, String)] = [
             ("/System", "macOS 시스템"), ("/usr", "시스템 바이너리"), ("/bin", "시스템 바이너리"),

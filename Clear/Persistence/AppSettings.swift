@@ -48,6 +48,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     var duplicateMinimumSizeMB = 1
     var duplicateFolders: [String] = []
     var similarPhotoThreshold: Double = 0.35
+    var fullDiskAccessNoticeDismissed = false
 
     init() {}
 
@@ -70,6 +71,7 @@ struct AppSettings: Codable, Equatable, Sendable {
         duplicateMinimumSizeMB = (try? c.decodeIfPresent(Int.self, forKey: .duplicateMinimumSizeMB)) ?? d.duplicateMinimumSizeMB
         duplicateFolders = (try? c.decodeIfPresent([String].self, forKey: .duplicateFolders)) ?? d.duplicateFolders
         similarPhotoThreshold = (try? c.decodeIfPresent(Double.self, forKey: .similarPhotoThreshold)) ?? d.similarPhotoThreshold
+        fullDiskAccessNoticeDismissed = (try? c.decodeIfPresent(Bool.self, forKey: .fullDiskAccessNoticeDismissed)) ?? d.fullDiskAccessNoticeDismissed
     }
 }
 
