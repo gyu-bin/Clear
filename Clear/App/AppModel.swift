@@ -12,6 +12,7 @@ final class AppModel {
     let diskExplorer = DiskExplorerModel()
     let applications = ApplicationsModel()
     let duplicates = DuplicatesModel()
+    let freeSpace = FreeSpaceHistory()
 
     let fileSystem: FileSystemOperating
     let processInspector: ProcessInspecting
@@ -29,6 +30,9 @@ final class AppModel {
     var developer: LoadState<[ToolReport]> = .idle
     var ai: LoadState<[ToolReport]> = .idle
     var projects: [String: LoadState<ProjectReport>] = [:]
+    /// Size of `~/.Trash`; nil when unknown (no Full Disk Access).
+    private(set) var trashBytes: Int64?
+    private var trashMeasuredAt: Date?
 
     var generalSelection: Set<String> = []
     var developerSelection: Set<String> = []
@@ -78,9 +82,13 @@ final class AppModel {
             MainActor.assumeIsolated {
                 self?.refreshPermissions()
                 self?.refreshVolume()
+                self?.refreshTrash()
             }
         }
-        if !isRunningTests { startVolumeTicker() }
+        if !isRunningTests {
+            startVolumeTicker()
+            refreshTrash()
+        }
     }
 
     /// Keeps free space current. Reading volume capacity is a single cheap
@@ -145,7 +153,22 @@ final class AppModel {
         }
     }
 
+    /// Measures `~/.Trash` off the main thread (at most once a minute unless forced).
+    func refreshTrash(force: Bool = false) {
+        if !force, let at = trashMeasuredAt, Date().timeIntervalSince(at) < 60 { return }
+        trashMeasuredAt = Date()
+        Task { @MainActor in
+            let path = PathUtilities.realHomeDirectory.appendingPathComponent(".Trash").path
+            let size = await runOffMain { () -> Int64? in
+                guard let s = try? DirectorySizer().measure(path: path), s.inaccessibleCount == 0 else { return nil }
+                return s.allocated
+            }
+            trashBytes = size
+        }
+    }
+
     private func refreshTrashSize() {
+        refreshTrash(force: true)
         guard case .loaded(var report, let date) = general else { return }
         let trash = PathUtilities.realHomeDirectory.appendingPathComponent(".Trash").path
         if let size = try? DirectorySizer().measure(path: trash), size.inaccessibleCount == 0 {
@@ -213,6 +236,7 @@ final class AppModel {
         do {
             let fresh = try volumeService.volume()
             // Assign only on change so observing views do not re-render needlessly.
+            if !isRunningTests { freeSpace.record(available: fresh.availableForImportantUsage, total: fresh.totalCapacity) }
             if fresh != volume {
                 volume = fresh
                 Self.log.debug("free space now \(fresh.availableForImportantUsage, privacy: .public)")
@@ -257,7 +281,12 @@ final class AppModel {
                                                                 personalFolders: settings.overviewFolders)
             let progress = progressHandler { [weak self] p in if self?.storage.isLoading == true { self?.storage = .loading(p) } }
             let result = await StorageBreakdownScanner().scan(categories: categories, volume: volume, progress: progress)
-            storage = Task.isCancelled ? .idle : .loaded(result, Date())
+            if Task.isCancelled { storage = .idle; return }
+            storage = .loaded(result, Date())
+            settingsStore.lastBreakdown = StoredBreakdown(
+                date: Date(),
+                categories: result.segments.map { .init(id: $0.id, title: $0.title, bytes: $0.bytes) },
+                unattributed: result.unattributed)
         }
         Task { await finish("storage", task) }
         return task

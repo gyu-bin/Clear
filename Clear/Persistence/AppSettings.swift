@@ -9,6 +9,19 @@ struct ProjectFolder: Codable, Hashable, Identifiable, Sendable {
     var name: String { (path as NSString).lastPathComponent }
 }
 
+/// Storage categories from the last Mac scan, kept so Home can show them
+/// (labelled with their age) after a relaunch.
+struct StoredBreakdown: Codable, Equatable, Sendable {
+    struct Category: Codable, Equatable, Sendable, Identifiable {
+        let id: String
+        let title: String
+        let bytes: Int64?
+    }
+    var date: Date
+    var categories: [Category]
+    var unattributed: Int64
+}
+
 struct LastScanSummary: Codable, Equatable, Sendable {
     var date: Date
     var cleanableBytes: Int64
@@ -82,6 +95,7 @@ final class SettingsStore {
     private let defaults: UserDefaults
     private static let settingsKey = "clear.settings.v1"
     private static let lastScanKey = "clear.lastScan.v1"
+    private static let breakdownKey = "clear.lastBreakdown.v1"
 
     var settings: AppSettings {
         didSet { if settings != oldValue { persist() } }
@@ -97,6 +111,14 @@ final class SettingsStore {
         }
     }
 
+    var lastBreakdown: StoredBreakdown? {
+        didSet {
+            if let lastBreakdown, let data = try? JSONEncoder().encode(lastBreakdown) {
+                defaults.set(data, forKey: Self.breakdownKey)
+            }
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         if let data = defaults.data(forKey: Self.settingsKey),
@@ -107,6 +129,9 @@ final class SettingsStore {
         }
         if let data = defaults.data(forKey: Self.lastScanKey) {
             lastScan = try? JSONDecoder().decode(LastScanSummary.self, from: data)
+        }
+        if let data = defaults.data(forKey: Self.breakdownKey) {
+            lastBreakdown = try? JSONDecoder().decode(StoredBreakdown.self, from: data)
         }
     }
 
