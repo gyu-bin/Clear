@@ -25,6 +25,14 @@ struct CandidateTable: View {
     private var rows: [CleanupCandidate] { candidates.sorted(using: sortOrder) }
 
     var body: some View {
+        VStack(spacing: 0) {
+            SelectAllBar(candidates: candidates, checked: $checked)
+            Divider()
+            table
+        }
+    }
+
+    private var table: some View {
         Table(rows, selection: $focused, sortOrder: $sortOrder) {
             TableColumn("") { (c: CleanupCandidate) in
                 Toggle("", isOn: Binding(
@@ -74,6 +82,35 @@ struct CandidateTable: View {
         } primaryAction: { ids in
             if let id = ids.first, let path = candidates.first(where: { $0.id == id })?.path { FinderActions.reveal(path) }
         }
+    }
+}
+
+/// "전체 선택" checkbox for the rows currently shown. Native mixed state when only
+/// some rows are checked. Blocked rows are never selected.
+private struct SelectAllBar: View {
+    let candidates: [CleanupCandidate]
+    @Binding var checked: Set<String>
+
+    var body: some View {
+        let selectable = candidates.filter { $0.risk.isSelectable }
+        let bindings = selectable.map { c in
+            Binding<Bool>(get: { checked.contains(c.id) },
+                          set: { on in if on { checked.insert(c.id) } else { checked.remove(c.id) } })
+        }
+        let count = selectable.filter { checked.contains($0.id) }.count
+        HStack(spacing: Space.s) {
+            Toggle(sources: bindings, isOn: \.self) {
+                Text("전체 선택").font(ClearFont.callout)
+            }
+            .toggleStyle(.checkbox)
+            .disabled(selectable.isEmpty)
+            Text("\(selectable.count)개 중 \(count)개 · \(selectable.filter { checked.contains($0.id) }.reduce(0) { $0 + $1.estimatedBytes }.formattedBytes)")
+                .font(ClearFont.numericSmall).foregroundStyle(ClearColor.textTertiary)
+            Spacer()
+        }
+        .padding(.leading, Space.l + 1)
+        .padding(.trailing, Space.l)
+        .padding(.vertical, 6)
     }
 }
 
