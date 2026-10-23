@@ -57,6 +57,7 @@ final class AppModel {
 
         cleanup.makeExecutor = { [unowned self] in self.makeExecutor() }
         cleanup.preferTrash = { [unowned self] in self.settings.preferTrash }
+        cleanup.processes = processInspector
         cleanup.onFinished = { [unowned self] report in self.didFinishCleanup(report) }
 
         diskExplorer.environment = self

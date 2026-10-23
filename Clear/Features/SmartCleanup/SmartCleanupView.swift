@@ -8,7 +8,7 @@ struct SmartCleanupView: View {
 
     var body: some View {
         FixedPage(title: "스마트 청소", subtitle: "캐시 · 로그 · 임시 파일 · 다운로드") {
-            if !model.general.isLoading {
+            if !model.general.isLoading && model.general.value != nil {
                 Button { model.scanGeneral() } label: { Label(model.general.value == nil ? "스캔" : "다시 스캔", systemImage: "arrow.clockwise") }
                     .keyboardShortcut("r", modifiers: [.command, .option])
             }

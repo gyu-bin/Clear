@@ -15,7 +15,7 @@ struct DeveloperView: View {
         FixedPage(title: "개발자 도구", subtitle: model.developer.date.map { "\($0.formatted(.relative(presentation: .named))) 스캔" }) {
             if model.settings.developerModeEnabled {
                 if tab == .tools {
-                    if !model.developer.isLoading {
+                    if !model.developer.isLoading && model.developer.value != nil {
                         Button { model.scanDeveloper() } label: { Label(model.developer.value == nil ? "스캔" : "다시 스캔", systemImage: "arrow.clockwise") }
                     }
                 } else {

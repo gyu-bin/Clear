@@ -49,7 +49,12 @@ private struct ConfirmView: View {
                             .lineLimit(1).truncationMode(.middle)
                     }
                     Spacer()
-                    RiskBadge(risk: item.candidate.risk)
+                    if let running = model.cleanup.runningByItem[item.id] {
+                        TagBadge(text: "\(running.joined(separator: ", ")) 실행 중", tint: ClearColor.warning)
+                            .help("실행 중인 앱의 데이터는 정리하지 않고 건너뜁니다. 앱을 종료하면 정리할 수 있습니다.")
+                    } else {
+                        RiskBadge(risk: item.candidate.risk)
+                    }
                     Text(methodText(item)).font(ClearFont.caption).foregroundStyle(ClearColor.textSecondary).frame(width: 96, alignment: .trailing)
                     Text(item.candidate.estimatedBytes.formattedBytes).font(ClearFont.numericSmall).frame(width: 70, alignment: .trailing)
                 }
@@ -59,6 +64,7 @@ private struct ConfirmView: View {
             .frame(height: min(260, CGFloat(plan.items.count) * 38 + 16))
             Divider()
             VStack(alignment: .leading, spacing: Space.s) {
+                RunningAppsNotice(plan: plan)
                 ForEach(Array(plan.warnings.enumerated()), id: \.offset) { _, w in
                     Label(w, systemImage: "exclamationmark.triangle").font(ClearFont.caption).foregroundStyle(ClearColor.textSecondary)
                 }
@@ -73,10 +79,13 @@ private struct ConfirmView: View {
                 HStack {
                     Spacer()
                     Button("취소") { model.cleanup.dismiss() }.keyboardShortcut(.cancelAction).secondaryButton()
-                    Button("정리") { model.cleanup.confirm() }
+                    let runnable = model.cleanup.runnableCount(plan)
+                    Button(runnable == plan.items.count || runnable == 0 ? "정리" : "\(runnable)개 정리") { model.cleanup.confirm() }
                         .primaryButton()
                         .keyboardShortcut(.defaultAction)
-                        .disabled(plan.requiresExplicitAcknowledgement && !model.cleanup.acknowledged)
+                        .disabled(runnable == 0 || model.cleanup.isQuittingApps
+                                  || (plan.requiresExplicitAcknowledgement && !model.cleanup.acknowledged))
+                        .help(runnable == 0 ? "모든 항목이 실행 중인 앱의 데이터입니다. 앱을 종료한 뒤 정리하세요." : "")
                 }
                 .padding(.top, Space.s)
             }
@@ -87,6 +96,47 @@ private struct ConfirmView: View {
     private func methodText(_ item: CleanupPlanItem) -> String {
         if case .command = item.candidate.target { return "공식 명령" }
         return item.method == .trash ? "휴지통" : "즉시 삭제"
+    }
+}
+
+/// Explains which apps block items and offers to quit them normally.
+private struct RunningAppsNotice: View {
+    let plan: CleanupPlan
+    @Environment(\.appModel) private var model
+
+    var body: some View {
+        let blocked = plan.items.filter { model.cleanup.runningByItem[$0.id] != nil }
+        if !blocked.isEmpty {
+            let apps = model.cleanup.blockingApps(plan)
+            let names = Array(Set(blocked.flatMap { model.cleanup.runningByItem[$0.id] ?? [] })).sorted()
+            VStack(alignment: .leading, spacing: Space.xs) {
+                HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(ClearColor.warning)
+                    Text("\(names.joined(separator: ", "))이(가) 실행 중이라 \(blocked.count)개 항목은 정리할 수 없습니다.")
+                        .font(ClearFont.callout)
+                    Spacer()
+                    if model.cleanup.isQuittingApps {
+                        ProgressView().controlSize(.small)
+                        Text("종료하는 중…").font(ClearFont.caption).foregroundStyle(ClearColor.textSecondary)
+                    } else if !apps.isEmpty {
+                        Button(apps.count == 1 ? "\(apps[0].localizedName ?? "앱") 종료" : "앱 \(apps.count)개 종료") {
+                            model.cleanup.quitBlockingApps()
+                        }
+                        .secondaryButton()
+                        .help("일반 종료(⌘Q)와 같습니다. 저장하지 않은 작업이 있으면 앱이 먼저 물어봅니다.")
+                    }
+                }
+                Text(apps.isEmpty
+                     ? "터미널 등에서 실행 중인 도구를 종료한 뒤 다시 시도하세요."
+                     : "앱을 종료하면 바로 정리할 수 있습니다. 실행 중인 앱의 캐시를 지우면 앱이 오작동할 수 있어 건너뜁니다.")
+                    .font(ClearFont.caption).foregroundStyle(ClearColor.textSecondary).padding(.leading, 22)
+                if !model.cleanup.quitFailures.isEmpty {
+                    Text("\(model.cleanup.quitFailures.joined(separator: ", "))이(가) 아직 종료되지 않았습니다. 앱에서 저장 여부를 묻고 있는지 확인하세요.")
+                        .font(ClearFont.caption).foregroundStyle(ClearColor.warning).padding(.leading, 22)
+                }
+            }
+            .padding(.bottom, Space.xs)
+        }
     }
 }
 
@@ -115,14 +165,26 @@ private struct ResultView: View {
     let report: CleanupReport
     @Environment(\.appModel) private var model
 
+    private var outcome: (title: String, symbol: String, color: Color) {
+        let done = report.results.filter { $0.status == .removed || $0.status == .trashed || $0.status == .commandSucceeded }
+        if report.wasCancelled { return ("정리를 취소했습니다", "stop.circle.fill", ClearColor.warning) }
+        if done.isEmpty && !report.results.isEmpty {
+            return ("정리하지 못했습니다", "exclamationmark.circle.fill", ClearColor.warning)
+        }
+        if !report.failed.isEmpty || !report.skipped.isEmpty {
+            return ("일부 항목만 정리했습니다", "exclamationmark.circle.fill", ClearColor.warning)
+        }
+        return ("정리를 마쳤습니다", "checkmark.circle.fill", ClearColor.success)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Space.l) {
             HStack(spacing: Space.s) {
-                Image(systemName: report.failed.isEmpty && !report.wasCancelled ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                    .font(.system(size: 20)).foregroundStyle(report.failed.isEmpty && !report.wasCancelled ? ClearColor.success : ClearColor.warning)
+                Image(systemName: outcome.symbol)
+                    .font(.system(size: 20)).foregroundStyle(outcome.color)
                     .symbolEffect(.bounce, value: report.id)
                 VStack(alignment: .leading, spacing: Space.xxs) {
-                    Text(report.wasCancelled ? "정리를 취소했습니다" : report.failed.isEmpty ? "정리를 마쳤습니다" : "일부 항목을 정리하지 못했습니다")
+                    Text(outcome.title)
                         .font(ClearFont.pageTitle)
                     Text("성공 \(report.succeeded.count) · 실패 \(report.failed.count) · 건너뜀 \(report.skipped.count)")
                         .font(ClearFont.callout).foregroundStyle(ClearColor.textSecondary)
@@ -137,6 +199,7 @@ private struct ResultView: View {
             }
             let problems = report.results.filter { $0.status == .failed || $0.status == .skipped }
             if !problems.isEmpty {
+                Text("정리되지 않은 항목").font(ClearFont.captionEmphasis).foregroundStyle(ClearColor.textSecondary)
                 List(problems) { r in
                     VStack(alignment: .leading, spacing: 1) {
                         Text(r.title).font(ClearFont.callout)

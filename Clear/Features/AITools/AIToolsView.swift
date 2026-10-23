@@ -6,7 +6,7 @@ struct AIToolsView: View {
     var body: some View {
         @Bindable var model = model
         FixedPage(title: "AI 도구", subtitle: model.ai.date.map { "\($0.formatted(.relative(presentation: .named))) 스캔" }) {
-            if model.settings.aiToolsEnabled && !model.ai.isLoading {
+            if model.settings.aiToolsEnabled && !model.ai.isLoading && model.ai.value != nil {
                 Button { model.scanAI() } label: { Label(model.ai.value == nil ? "스캔" : "다시 스캔", systemImage: "arrow.clockwise") }
             }
         } content: {

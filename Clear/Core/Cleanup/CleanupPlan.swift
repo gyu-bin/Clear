@@ -66,10 +66,6 @@ struct CleanupPlanner: Sendable {
         }
 
         var warnings: [String] = []
-        let running = Set(items.flatMap(\.candidate.runningGuards))
-        if !running.isEmpty {
-            warnings.append("\(running.sorted().joined(separator: ", ")) 실행 중 — 해당 항목은 실행 시점에 건너뜁니다.")
-        }
         if items.contains(where: { !$0.candidate.regenerable }) {
             warnings.append("재생성되지 않는 데이터가 포함되어 있습니다. 휴지통에서 복구할 수 있습니다.")
         }
