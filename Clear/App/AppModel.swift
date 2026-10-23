@@ -39,6 +39,7 @@ final class AppModel {
     /// Re-checked whenever the app becomes active (the user may have just granted it).
     private(set) var hasFullDiskAccess = AppModel.checkFullDiskAccess()
     private var activationObserver: NSObjectProtocol?
+    private var volumeTicker: Task<Void, Never>?
     private var tasks: [String: Task<Void, Never>] = [:]
     private var monitor: BackgroundMonitor?
     private static let log = Logger(subsystem: "com.mungyubin.clear", category: "app")
@@ -74,7 +75,30 @@ final class AppModel {
         }
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshPermissions() }
+            MainActor.assumeIsolated {
+                self?.refreshPermissions()
+                self?.refreshVolume()
+            }
+        }
+        if !isRunningTests { startVolumeTicker() }
+    }
+
+    /// Keeps free space current. Reading volume capacity is a single cheap
+    /// `URLResourceValues` query (no file walking): every 5 s while Clear is
+    /// active, every 60 s in the background.
+    private func startVolumeTicker() {
+        volumeTicker?.cancel()
+        volumeTicker = Task { @MainActor [weak self] in
+            var last = Date()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let self else { return }
+                let interval: TimeInterval = (NSApp?.isActive ?? false) ? 5 : 60
+                if Date().timeIntervalSince(last) >= interval {
+                    self.refreshVolume()
+                    last = Date()
+                }
+            }
         }
     }
 
@@ -187,7 +211,12 @@ final class AppModel {
 
     func refreshVolume() {
         do {
-            volume = try volumeService.volume()
+            let fresh = try volumeService.volume()
+            // Assign only on change so observing views do not re-render needlessly.
+            if fresh != volume {
+                volume = fresh
+                Self.log.debug("free space now \(fresh.availableForImportantUsage, privacy: .public)")
+            }
             volumeError = nil
         } catch {
             volumeError = error.localizedDescription
