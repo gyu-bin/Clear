@@ -17,6 +17,11 @@ struct GeneralCleanupScanner: Sendable {
     var downloadsInstallerMinimum: Int64 = 20 * 1024 * 1024
     var downloadsInstallerAge: TimeInterval = 14 * 24 * 3600
 
+    /// Also look for leftovers of uninstalled apps, hidden caches, broken login items.
+    var includeLeftovers = true
+    /// Scan other apps' containers (only with Full Disk Access, otherwise macOS prompts per app).
+    var includeContainers = false
+
     static let ownedLogFolders: Set<String> = ["Claude", "Cursor", "CoreSimulator", "JetBrains", "Google", "Homebrew"]
     static let installerExtensions: Set<String> = ["dmg", "pkg", "mpkg", "zip", "xip", "iso", "ipsw"]
 
@@ -34,6 +39,11 @@ struct GeneralCleanupScanner: Sendable {
         scanTemporary(ctx, into: &report)
         ctx.progress(ScanProgress(phase: "다운로드 폴더 분석 중"))
         scanDownloads(ctx, into: &report)
+        if includeLeftovers {
+            try Task.checkCancellation()
+            LeftoverScanner(installedBundleIDs: Set(appNames.keys), includeContainers: includeContainers)
+                .scan(ctx, into: &report)
+        }
         ctx.progress(ScanProgress(phase: "휴지통 크기 확인 중"))
         let trash = ctx.url(".Trash")
         if ctx.exists(trash) {

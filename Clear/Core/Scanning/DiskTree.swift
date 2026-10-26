@@ -57,7 +57,7 @@ final class DiskNode: Identifiable, Hashable, Sendable {
 }
 
 enum FileTypeGroup: String, CaseIterable, Sendable, Codable {
-    case folder, image, video, audio, document, archive, installer, code, application, developer, model, other
+    case folder, image, video, audio, document, archive, installer, diskImage, code, application, developer, model, other
 
     var title: String {
         switch self {
@@ -68,6 +68,7 @@ enum FileTypeGroup: String, CaseIterable, Sendable, Codable {
         case .document: "문서"
         case .archive: "압축 파일"
         case .installer: "설치 파일"
+        case .diskImage: "디스크·가상 머신 이미지"
         case .code: "코드"
         case .application: "앱"
         case .developer: "개발 산출물"
@@ -85,6 +86,7 @@ enum FileTypeGroup: String, CaseIterable, Sendable, Codable {
         case .document: "doc.richtext"
         case .archive: "archivebox"
         case .installer: "shippingbox"
+        case .diskImage: "externaldrive"
         case .code: "chevron.left.forwardslash.chevron.right"
         case .application: "app"
         case .developer: "hammer"
@@ -114,7 +116,9 @@ enum FileTypeGroup: String, CaseIterable, Sendable, Codable {
             return .application
         case "o", "a", "dylib", "dSYM", "xcarchive", "ipa", "apk", "aab", "class", "jar", "pcm", "swiftmodule":
             return .developer
-        case "gguf", "safetensors", "ckpt", "pt", "pth", "onnx", "mlmodel", "mlpackage", "bin":
+        case "img", "qcow2", "vmdk", "vdi", "vhd", "vhdx", "sparseimage", "utm":
+            return .diskImage
+        case "gguf", "safetensors", "ckpt", "pt", "pth", "onnx", "mlmodel", "mlpackage":
             return .model
         default:
             return .other

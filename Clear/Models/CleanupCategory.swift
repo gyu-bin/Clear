@@ -42,6 +42,11 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
     case duplicate
     case similarPhoto
     case trash
+    case orphanedAppData
+    case hiddenCache
+    case brokenLoginItem
+    case softwareUpdates
+    case largeFile
 
     var title: String {
         switch self {
@@ -70,6 +75,11 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
         case .duplicate: "중복 파일"
         case .similarPhoto: "비슷한 사진"
         case .trash: "휴지통"
+        case .orphanedAppData: "삭제된 앱의 잔여 파일"
+        case .hiddenCache: "숨겨진 캐시 폴더"
+        case .brokenLoginItem: "깨진 로그인 항목"
+        case .softwareUpdates: "기기 업데이트 파일"
+        case .largeFile: "대용량 파일"
         }
     }
 
@@ -100,12 +110,18 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
         case .duplicate: "doc.on.doc"
         case .similarPhoto: "photo.on.rectangle"
         case .trash: "trash"
+        case .orphanedAppData: "questionmark.app.dashed"
+        case .hiddenCache: "eye.slash"
+        case .brokenLoginItem: "exclamationmark.arrow.triangle.2.circlepath"
+        case .softwareUpdates: "iphone.and.arrow.forward"
+        case .largeFile: "doc.text.magnifyingglass"
         }
     }
 
     var domain: CleanupDomain {
         switch self {
-        case .appCache, .systemCache, .logs, .temporary, .savedState, .downloads, .trash: .general
+        case .appCache, .systemCache, .logs, .temporary, .savedState, .downloads, .trash,
+             .orphanedAppData, .hiddenCache, .brokenLoginItem, .softwareUpdates, .largeFile: .general
         case .xcode, .simulator, .swiftPackages, .node, .expo, .gradle, .android, .homebrew, .docker: .developer
         case .projectBuild, .projectDependencies: .projects
         case .aiCache, .aiLogs, .aiModels: .aiTools

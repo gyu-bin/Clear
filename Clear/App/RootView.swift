@@ -34,6 +34,7 @@ struct RootView: View {
         case .overview: OverviewView()
         case .smartCleanup: SmartCleanupView()
         case .diskExplorer: DiskExplorerView()
+        case .largeFiles: LargeFilesView()
         case .applications: ApplicationsView()
         case .duplicates: DuplicatesView()
         case .developer: DeveloperView()
@@ -91,6 +92,7 @@ struct SidebarView: View {
         case .developer: model.developer.isLoading
         case .aiTools: model.ai.isLoading
         case .diskExplorer: model.diskExplorer.state.isLoading
+        case .largeFiles: model.largeFiles.state.isLoading
         case .duplicates: model.duplicates.exact.isLoading || model.duplicates.similar.isLoading
         default: false
         }

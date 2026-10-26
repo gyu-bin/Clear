@@ -1,4 +1,6 @@
+import ServiceManagement
 import SwiftUI
+import UserNotifications
 
 @main
 struct ClearApp: App {
@@ -30,13 +32,41 @@ struct ClearApp: App {
 /// Keeping it outside the scene graph removed the crash (verified by repeated
 /// launch tests, see scripts/launch-test.sh).
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     let model = AppModel()
     private var statusItem: StatusItemController?
+    private var launchedAsLoginItem = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        launchedAsLoginItem = event?.eventID == kAEOpenApplication
+            && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !model.isRunningTests else { return }
         statusItem = StatusItemController(model: model)
+        UNUserNotificationCenter.current().delegate = self
+        // Started at login: stay quietly in the menu bar (when the icon is enabled).
+        if launchedAsLoginItem && model.settings.showMenuBarIcon {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                for window in NSApp.windows where window.identifier?.rawValue.hasPrefix("main") == true { window.close() }
+            }
+        }
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async
+        -> UNNotificationPresentationOptions {
+        [.banner, .sound]
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        let raw = response.notification.request.content.userInfo["target"] as? String
+        await MainActor.run {
+            if let raw, let target = SidebarItem(rawValue: raw) { model.selection = target }
+            model.openMainWindow?()
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

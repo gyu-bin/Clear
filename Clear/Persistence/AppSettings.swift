@@ -55,7 +55,10 @@ struct AppSettings: Codable, Equatable, Sendable {
     var historyRetentionDays = 180
     var showMenuBarIcon = true
     var autoScanEnabled = false
-    var autoScanIntervalHours = 24
+    var autoScanIntervalHours = 168
+    /// Notify only when at least this much can be cleaned.
+    var reminderThresholdGB = 5
+    var lastReminderCheck: Date?
     var lowStorageAlertEnabled = false
     var lowStorageThresholdGB = 20
     var duplicateMinimumSizeMB = 1
@@ -79,6 +82,8 @@ struct AppSettings: Codable, Equatable, Sendable {
         showMenuBarIcon = (try? c.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon)) ?? d.showMenuBarIcon
         autoScanEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .autoScanEnabled)) ?? d.autoScanEnabled
         autoScanIntervalHours = (try? c.decodeIfPresent(Int.self, forKey: .autoScanIntervalHours)) ?? d.autoScanIntervalHours
+        reminderThresholdGB = (try? c.decodeIfPresent(Int.self, forKey: .reminderThresholdGB)) ?? d.reminderThresholdGB
+        lastReminderCheck = try? c.decodeIfPresent(Date.self, forKey: .lastReminderCheck)
         lowStorageAlertEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .lowStorageAlertEnabled)) ?? d.lowStorageAlertEnabled
         lowStorageThresholdGB = (try? c.decodeIfPresent(Int.self, forKey: .lowStorageThresholdGB)) ?? d.lowStorageThresholdGB
         duplicateMinimumSizeMB = (try? c.decodeIfPresent(Int.self, forKey: .duplicateMinimumSizeMB)) ?? d.duplicateMinimumSizeMB

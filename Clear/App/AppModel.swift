@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import Foundation
 import os
 
@@ -12,6 +13,7 @@ final class AppModel {
     let diskExplorer = DiskExplorerModel()
     let applications = ApplicationsModel()
     let duplicates = DuplicatesModel()
+    let largeFiles = LargeFilesModel()
     let freeSpace = FreeSpaceHistory()
 
     let fileSystem: FileSystemOperating
@@ -71,6 +73,7 @@ final class AppModel {
         diskExplorer.environment = self
         applications.environment = self
         duplicates.environment = self
+        largeFiles.environment = self
         history.prune(retentionDays: settingsStore.settings.historyRetentionDays)
         refreshVolume()
         if !isRunningTests {
@@ -132,6 +135,25 @@ final class AppModel {
         }
     }
 
+    // MARK: Launch at login
+
+    /// Registered through `SMAppService`, the system login-item API (visible and
+    /// removable in System Settings › General › Login Items).
+    var launchAtLogin: Bool {
+        get { loginItemEnabled }
+        set {
+            do {
+                if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                loginItemError = nil
+            } catch {
+                loginItemError = error.localizedDescription
+            }
+            loginItemEnabled = SMAppService.mainApp.status == .enabled
+        }
+    }
+    private(set) var loginItemEnabled = SMAppService.mainApp.status == .enabled
+    private(set) var loginItemError: String?
+
     // MARK: Trash
 
     /// Lists the Trash and opens the normal confirmation flow. Nothing is removed
@@ -185,6 +207,7 @@ final class AppModel {
         var policy = SafetyPolicy(exclusions: settings.excludedPaths)
         policy.addAllowedRoots(settings.projectFolders.map { URL(fileURLWithPath: $0.path) })
         policy.addAllowedRoots(duplicates.activeRoots)
+        policy.addAllowedRoots(largeFiles.activeRoots)
         return policy
     }
 
@@ -301,7 +324,16 @@ final class AppModel {
             })
             do {
                 let names = await runOffMain { AppCatalog.nameIndex() }
-                let report = try await GeneralCleanupScanner().scan(ctx, appNames: names)
+                var scanner = GeneralCleanupScanner()
+                scanner.includeContainers = hasFullDiskAccess
+                var report = try await scanner.scan(ctx, appNames: names)
+                // LaunchServices knows apps outside /Applications too (e.g. in ~/Downloads or
+                // built by Xcode). Anything it can still resolve is not a leftover.
+                report.candidates.removeAll { c in
+                    guard c.category == .orphanedAppData else { return false }
+                    let id = c.title.split(separator: " ").first.map(String.init) ?? ""
+                    return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) != nil
+                }
                 general = .loaded(report, Date())
                 generalSelection = Set(report.candidates.filter(\.isDefaultSelected).map(\.id))
             } catch is CancellationError {
@@ -464,6 +496,7 @@ final class AppModel {
         if report.results.contains(where: { $0.category == .trash }) || report.trashedBytes > 0 { refreshTrashSize() }
         applications.didFinishCleanup(done)
         duplicates.didFinishCleanup(done)
+        largeFiles.didFinishCleanup(done)
         refreshVolume()
         updateLastScanSummary()
     }

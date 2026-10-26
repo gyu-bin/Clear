@@ -25,6 +25,9 @@ struct SafetyPolicy: Sendable {
     let protectedComponentNames: [String: String]
     /// Path component suffixes that are protected anywhere.
     let protectedComponentSuffixes: [String: String]
+    /// Inside these folders, files with these extensions are protected at any depth
+    /// (conversation logs, databases, settings of AI tools).
+    let protectedFilesInTrees: [(tree: String, suffixes: [String], reason: String)]
     /// User-configured exclusions (subtree).
     var exclusions: [String]
 
@@ -41,6 +44,8 @@ struct SafetyPolicy: Sendable {
             p("Library/Developer"), p("Downloads"),
             p(".npm"), p(".gradle"), p(".android"), p(".expo"), p(".cache"),
             p("Library/pnpm/store"), p(".yarn/berry/cache"), p(".Trash"),
+            p(".m2"), p(".cocoapods"), p(".cargo"), p(".pub-cache"), p(".bun"), p(".node-gyp"),
+            p(".electron-gyp"), p(".nuget"), p(".composer"), p("Library/iTunes"),
             p(".claude"), p(".codex"), p(".ollama"), p(".lmstudio"),
             p("Library/Application Support/Cursor"), p("Library/Application Support/Claude"),
             p("Library/Application Support/Code"),
@@ -71,6 +76,9 @@ struct SafetyPolicy: Sendable {
             (p(".ollama"), "Ollama 데이터 폴더"), (p(".lmstudio"), "LM Studio 데이터 폴더"),
             (p(".expo"), "Expo 데이터 폴더"), (p("Library/Developer/Xcode/UserData"), "Xcode 사용자 데이터 폴더"),
             (temporaryDirectory.path, "임시 폴더 자체"), (p(".Trash"), "휴지통 폴더 자체"),
+            (p(".m2"), "Maven 폴더 자체"), (p(".cocoapods"), "CocoaPods 폴더 자체"), (p(".cargo"), "Cargo 폴더 자체"),
+            (p(".pub-cache"), "Dart/Flutter 폴더 자체"), (p(".bun"), "Bun 폴더 자체"), (p(".nuget"), "NuGet 폴더 자체"),
+            (p(".composer"), "Composer 폴더 자체"), (p("Library/iTunes"), "iTunes 폴더 자체"),
         ]
         let subtrees: [(String, String)] = [
             ("/System", "macOS 시스템"), ("/usr", "시스템 바이너리"), ("/bin", "시스템 바이너리"),
@@ -103,6 +111,9 @@ struct SafetyPolicy: Sendable {
             (p(".expo/state.json"), "Expo 로그인 정보"), (p(".expo/codesigning"), "Expo 코드 서명"),
             (p(".android/debug.keystore"), "Android 서명 키"), (p(".android/avd"), "Android 에뮬레이터 — 직접 관리"),
             (p(".gradle/gradle.properties"), "Gradle 설정(자격 증명 포함 가능)"),
+            (p(".cargo/bin"), "설치된 Rust 도구"), (p(".cargo/credentials.toml"), "Cargo 인증"), (p(".cargo/credentials"), "Cargo 인증"),
+            (p(".m2/settings.xml"), "Maven 설정(자격 증명 포함 가능)"), (p(".bun/bin"), "설치된 Bun"),
+            (p(".pub-cache/credentials.json"), "pub 인증"), (p(".composer/auth.json"), "Composer 인증"),
             (p("Library/Application Support/Cursor/User"), "Cursor 사용자 설정 및 기록"),
             (p("Library/Application Support/Code/User"), "VS Code 사용자 설정"),
             (p("Library/Application Support/Claude/claude-code-sessions"), "Claude 세션"),
@@ -124,6 +135,12 @@ struct SafetyPolicy: Sendable {
             ".Trashes": "볼륨 휴지통", ".Spotlight-V100": "Spotlight 색인", ".DocumentRevisions-V100": "문서 버전",
             ".fseventsd": "파일 시스템 이벤트",
         ]
+        protectedFilesInTrees = [
+            (p(".codex"), [".sqlite", ".sqlite-wal", ".sqlite-shm", ".jsonl", ".json", ".toml", ".md"], "Codex 기록·설정"),
+            (p(".claude"), [".jsonl", ".json", ".md", ".sqlite"], "Claude Code 기록·설정"),
+            (p(".gemini"), [".json", ".jsonl", ".md", ".toml"], "Gemini CLI 기록·설정"),
+            (p(".cursor"), [".json", ".jsonl", ".sqlite", ".vscdb"], "Cursor 데이터"),
+        ]
         protectedComponentSuffixes = [
             ".photoslibrary": "사진 보관함", ".backupdb": "Time Machine 백업", ".previousSystem": "이전 시스템",
             ".keychain": "키체인", ".keychain-db": "키체인", ".sparsebundle": "디스크 이미지 번들",
@@ -144,6 +161,10 @@ struct SafetyPolicy: Sendable {
 
     /// Reason the canonical path is protected, or nil.
     func protectionReason(for path: String) -> String? {
+        let lowerName = (path as NSString).lastPathComponent.lowercased()
+        for rule in protectedFilesInTrees where PathUtilities.isStrictDescendant(path, of: rule.tree) {
+            if rule.suffixes.contains(where: { lowerName.hasSuffix($0) }) { return rule.reason }
+        }
         for prot in protections {
             if path == prot.path { return prot.reason }
             // Removing an ancestor of a protected location would remove it too.

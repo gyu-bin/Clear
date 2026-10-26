@@ -89,15 +89,31 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("자동 스캔", isOn: $store.settings.autoScanEnabled)
-                Picker("간격", selection: $store.settings.autoScanIntervalHours) {
-                    Text("6시간").tag(6); Text("12시간").tag(12); Text("하루").tag(24); Text("3일").tag(72); Text("일주일").tag(168)
+                Toggle("주기적으로 정리할 항목 알려주기", isOn: Binding(
+                    get: { store.settings.autoScanEnabled },
+                    set: { on in
+                        store.settings.autoScanEnabled = on
+                        if on { Task { _ = await BackgroundMonitor.requestAuthorization() } }
+                    }))
+                Picker("주기", selection: $store.settings.autoScanIntervalHours) {
+                    Text("매일").tag(24); Text("매주").tag(168); Text("매달").tag(720)
                 }
                 .disabled(!store.settings.autoScanEnabled)
+                Stepper("정리할 항목이 \(store.settings.reminderThresholdGB)GB 이상일 때 알림",
+                        value: $store.settings.reminderThresholdGB, in: 1...200)
+                    .disabled(!store.settings.autoScanEnabled)
+                Toggle("로그인할 때 메뉴 막대에서 조용히 실행", isOn: Binding(
+                    get: { model.launchAtLogin }, set: { model.launchAtLogin = $0 }))
+                if let error = model.loginItemError {
+                    Text(error).font(ClearFont.caption).foregroundStyle(ClearColor.danger)
+                }
+                if let last = store.settings.lastReminderCheck {
+                    LabeledContent("마지막 확인", value: last.formatted(.relative(presentation: .named)))
+                }
             } header: {
-                Text("자동 스캔")
+                Text("정리 알림")
             } footer: {
-                Text("앱이 실행 중일 때만 스마트 청소 스캔을 수행하며 아무것도 삭제하지 않습니다. 기본값은 꺼짐입니다.")
+                Text("캐시·삭제된 앱의 찌꺼기·숨겨진 캐시와 6개월 넘게 열지 않은 큰 파일을 확인해 알려 줍니다. 읽기만 하며 아무것도 자동으로 지우지 않습니다. 앱이 꺼져 있으면 확인하지 않으니, 로그인 시 실행을 함께 켜 두세요.")
             }
 
             Section {
