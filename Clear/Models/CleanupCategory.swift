@@ -47,6 +47,10 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
     case brokenLoginItem
     case softwareUpdates
     case largeFile
+    case browserCache
+    case screenshots
+    case mailAttachments
+    case startupItem
 
     var title: String {
         switch self {
@@ -80,6 +84,10 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
         case .brokenLoginItem: "깨진 로그인 항목"
         case .softwareUpdates: "기기 업데이트 파일"
         case .largeFile: "대용량 파일"
+        case .browserCache: "브라우저 캐시"
+        case .screenshots: "스크린샷·화면 기록"
+        case .mailAttachments: "메일 첨부파일"
+        case .startupItem: "시작 항목"
         }
     }
 
@@ -115,13 +123,18 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
         case .brokenLoginItem: "exclamationmark.arrow.triangle.2.circlepath"
         case .softwareUpdates: "iphone.and.arrow.forward"
         case .largeFile: "doc.text.magnifyingglass"
+        case .browserCache: "safari"
+        case .screenshots: "camera.viewfinder"
+        case .mailAttachments: "paperclip"
+        case .startupItem: "power"
         }
     }
 
     var domain: CleanupDomain {
         switch self {
         case .appCache, .systemCache, .logs, .temporary, .savedState, .downloads, .trash,
-             .orphanedAppData, .hiddenCache, .brokenLoginItem, .softwareUpdates, .largeFile: .general
+             .orphanedAppData, .hiddenCache, .brokenLoginItem, .softwareUpdates, .largeFile,
+             .browserCache, .screenshots, .mailAttachments, .startupItem: .general
         case .xcode, .simulator, .swiftPackages, .node, .expo, .gradle, .android, .homebrew, .docker: .developer
         case .projectBuild, .projectDependencies: .projects
         case .aiCache, .aiLogs, .aiModels: .aiTools

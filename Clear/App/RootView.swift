@@ -36,6 +36,7 @@ struct RootView: View {
         case .diskExplorer: DiskExplorerView()
         case .largeFiles: LargeFilesView()
         case .applications: ApplicationsView()
+        case .startupItems: StartupItemsView()
         case .duplicates: DuplicatesView()
         case .developer: DeveloperView()
         case .aiTools: AIToolsView()
@@ -81,14 +82,14 @@ struct SidebarView: View {
 
     private func badgeBytes(_ item: SidebarItem) -> Int64? {
         switch item {
-        case .smartCleanup: model.general.value.map { model.cleanableBytes($0.candidates) }
+        case .smartCleanup: model.general.value.map { _ in model.cleanableBytes(model.junkCandidates) }
         default: nil
         }
     }
 
     private func isBusy(_ item: SidebarItem) -> Bool {
         switch item {
-        case .smartCleanup: model.general.isLoading
+        case .smartCleanup: model.isJunkScanning
         case .developer: model.developer.isLoading
         case .aiTools: model.ai.isLoading
         case .diskExplorer: model.diskExplorer.state.isLoading

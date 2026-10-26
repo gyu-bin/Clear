@@ -54,6 +54,22 @@ enum CacheKnowledgeBase {
         "com.datadoghq": "Datadog SDK 캐시",
     ]
 
+    /// Browser cache folders in ~/Library/Caches → (display name, bundle id for the running-app guard).
+    static let browsers: [String: (name: String, bundleID: String)] = [
+        "com.apple.Safari": ("Safari", "com.apple.Safari"),
+        "Firefox": ("Firefox", "org.mozilla.firefox"),
+        "Arc": ("Arc", "company.thebrowser.Browser"),
+        "company.thebrowser.Browser": ("Arc", "company.thebrowser.Browser"),
+        "com.brave.Browser": ("Brave", "com.brave.Browser"),
+        "BraveSoftware": ("Brave", "com.brave.Browser"),
+        "com.microsoft.edgemac": ("Microsoft Edge", "com.microsoft.edgemac"),
+        "Microsoft Edge": ("Microsoft Edge", "com.microsoft.edgemac"),
+        "com.operasoftware.Opera": ("Opera", "com.operasoftware.Opera"),
+        "com.naver.Whale": ("네이버 웨일", "com.naver.Whale"),
+        "com.vivaldi.Vivaldi": ("Vivaldi", "com.vivaldi.Vivaldi"),
+        "com.google.Chrome": ("Chrome", "com.google.Chrome"),
+    ]
+
     /// Bundle IDs whose folder name differs from the running app bundle ID.
     static let guardOverrides: [String: ProcessGuard] = [
         "Arc": .app("company.thebrowser.Browser", "Arc"),

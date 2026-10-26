@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
-    case overview, smartCleanup, diskExplorer, largeFiles, applications, duplicates, developer, aiTools, history, settings
+    case overview, smartCleanup, diskExplorer, largeFiles, applications, startupItems, duplicates, developer, aiTools, history, settings
 
     var id: String { rawValue }
 
@@ -12,6 +12,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .diskExplorer: "디스크 분석"
         case .largeFiles: "대용량 파일"
         case .applications: "앱 관리"
+        case .startupItems: "시작 항목"
         case .duplicates: "중복 파일"
         case .developer: "개발자 도구"
         case .aiTools: "AI 도구"
@@ -27,6 +28,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .diskExplorer: "폴더별 사용량 트리맵"
         case .largeFiles: "큰 파일·오래 안 쓴 파일"
         case .applications: "앱과 관련 파일 제거"
+        case .startupItems: "로그인·부팅 시 실행되는 항목"
         case .duplicates: "동일 파일·비슷한 사진"
         case .developer: "개발 도구 캐시와 프로젝트"
         case .aiTools: "AI 도구 캐시·로그·모델"
@@ -42,6 +44,7 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .diskExplorer: "square.grid.3x3.square"
         case .largeFiles: "doc.text.magnifyingglass"
         case .applications: "square.stack.3d.down.right"
+        case .startupItems: "power"
         case .duplicates: "doc.on.doc"
         case .developer: "hammer"
         case .aiTools: "brain"
@@ -66,15 +69,16 @@ enum SidebarItem: String, CaseIterable, Identifiable, Hashable {
         case .diskExplorer: "3"
         case .largeFiles: "4"
         case .applications: "5"
-        case .duplicates: "6"
-        case .developer: "7"
-        case .aiTools: "8"
-        case .history: "9"
+        case .startupItems: "6"
+        case .duplicates: "7"
+        case .developer: "8"
+        case .aiTools: "9"
+        case .history: nil
         case .settings: nil
         }
     }
 
-    static let primary: [SidebarItem] = [.overview, .smartCleanup, .diskExplorer, .largeFiles, .applications, .duplicates]
+    static let primary: [SidebarItem] = [.overview, .smartCleanup, .diskExplorer, .largeFiles, .applications, .startupItems, .duplicates]
     static let tools: [SidebarItem] = [.developer, .aiTools]
     static let other: [SidebarItem] = [.history, .settings]
 }

@@ -6,6 +6,9 @@ struct GeneralScanReport: Sendable {
     var trashSize: SizeInfo?
     /// Locations that could not be read (shown as "접근 제한", never as 0 B).
     var restrictedLocations: [String] = []
+    /// Readable size of /Library/Logs and /private/var/log. Shown only: removing
+    /// them needs administrator rights, which Clear never uses.
+    var systemLogBytes: Int64?
 }
 
 /// Rules for everyday cleanup: app caches, logs, window state, old temp items,
@@ -44,6 +47,14 @@ struct GeneralCleanupScanner: Sendable {
             LeftoverScanner(installedBundleIDs: Set(appNames.keys), includeContainers: includeContainers)
                 .scan(ctx, into: &report)
         }
+        ctx.progress(ScanProgress(phase: "스크린샷 찾는 중"))
+        scanScreenshots(ctx, into: &report)
+        if includeContainers { scanMailDownloads(ctx, into: &report) }
+        var systemLogs = SizeInfo()
+        for path in ["/Library/Logs", "/private/var/log"] {
+            if let size = try? ctx.sizer.measure(path: path) { systemLogs.merge(size) }
+        }
+        report.systemLogBytes = systemLogs.allocated
         ctx.progress(ScanProgress(phase: "휴지통 크기 확인 중"))
         let trash = ctx.url(".Trash")
         if ctx.exists(trash) {
@@ -77,7 +88,7 @@ struct GeneralCleanupScanner: Sendable {
                 for sub in ctx.children(of: child) ?? [] where !sub.lastPathComponent.hasPrefix("AndroidStudio") {
                     let isChrome = sub.lastPathComponent == "Chrome"
                     let spec = CandidateSpec(
-                        title: "Google \(sub.lastPathComponent) 캐시", category: .appCache, ruleID: "general.caches.google",
+                        title: "Google \(sub.lastPathComponent) 캐시", category: isChrome ? .browserCache : .appCache, ruleID: "general.caches.google",
                         risk: isChrome ? .safe : .review,
                         riskReason: isChrome ? "Chrome이 다시 만드는 웹 캐시" : "Google 앱 캐시 — 확인 필요",
                         impact: "앱이 다음 실행 시 캐시를 다시 만듭니다.", regenerable: true,
@@ -107,13 +118,52 @@ struct GeneralCleanupScanner: Sendable {
                 spec.riskReason = CacheKnowledgeBase.isUpdaterLeftover(name)
                     ? "설치가 끝난 업데이트 다운로드 잔여 파일"
                     : "검증된 재생성 가능 캐시"
-            } else if name.hasPrefix("com.apple.") {
+            } else if name.hasPrefix("com.apple.") && CacheKnowledgeBase.browsers[name] == nil {
                 spec.category = .systemCache
                 spec.riskReason = "macOS 구성요소 캐시 — 재생성되지만 일시적으로 느려질 수 있음"
                 spec.guards = []
             }
+            if let browser = CacheKnowledgeBase.browsers[name], spec.risk != .blocked {
+                spec.category = .browserCache
+                spec.title = "\(browser.name) 캐시"
+                spec.guards = [.app(browser.bundleID, browser.name)]
+                spec.risk = .safe
+                spec.riskReason = "브라우저가 다시 만드는 웹 캐시 — 로그인·방문 기록에는 영향 없음"
+            }
             if let c = ctx.makeCandidate(at: child, root: root, spec: spec) { report.candidates.append(c) }
         }
+    }
+
+    /// Screenshots and screen recordings in the folder macOS saves them to.
+    private func scanScreenshots(_ ctx: ScanContext, into report: inout GeneralScanReport) {
+        let folder = ScreenshotLocator.folder(home: ctx.home)
+        guard let canonical = PathUtilities.canonicalPath(folder.path), ctx.policy.isAllowedRoot(canonical) else { return }
+        for file in ctx.children(of: folder) ?? [] where ScreenshotLocator.isScreenshot(file.lastPathComponent) {
+            guard let id = try? ctx.fileSystem.identity(atPath: file.path), id.kind == .file, !id.isDataless else { continue }
+            let age = ctx.scannedAt.timeIntervalSince(id.modificationDate)
+            let spec = CandidateSpec(
+                title: file.lastPathComponent, category: .screenshots, ruleID: "general.screenshots",
+                risk: .manual,
+                riskReason: age > 30 * 86_400 ? "한 달 넘게 지난 스크린샷" : "최근 스크린샷 — 필요한지 확인하세요",
+                impact: "휴지통으로 이동합니다. 휴지통에서 되돌릴 수 있습니다.",
+                regenerable: false, preferredMethod: .trash, allowsPermanentRemoval: false,
+                toleratesContentChanges: false, minimumSize: 0)
+            if let c = ctx.makeCandidate(at: file, root: URL(fileURLWithPath: canonical), spec: spec) { report.candidates.append(c) }
+        }
+    }
+
+    /// Copies of attachments that Mail saved when they were opened. Mail
+    /// re-downloads them from the message when needed; mail data itself stays protected.
+    private func scanMailDownloads(_ ctx: ScanContext, into report: inout GeneralScanReport) {
+        let root = ctx.url("Library/Containers/com.apple.mail/Data/Library")
+        let folder = root.appendingPathComponent("Mail Downloads")
+        guard ctx.exists(folder) else { return }
+        let spec = CandidateSpec(
+            title: "메일 첨부파일 사본", category: .mailAttachments, ruleID: "general.mailDownloads",
+            risk: .review, riskReason: "메일에서 연 첨부파일의 임시 사본 — 원본은 메일에 남아 있음",
+            impact: "메일 앱이 첨부파일을 다시 열 때 다시 내려받습니다.", regenerable: true,
+            guards: [.app("com.apple.mail", "Mail")], preferredMethod: .trash, minimumSize: 1024 * 1024)
+        if let c = ctx.makeCandidate(at: folder, root: ctx.url("Library/Containers"), spec: spec) { report.candidates.append(c) }
     }
 
     private func scanLogs(_ ctx: ScanContext, into report: inout GeneralScanReport) {

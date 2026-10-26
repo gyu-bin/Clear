@@ -28,6 +28,9 @@ struct SafetyPolicy: Sendable {
     /// Inside these folders, files with these extensions are protected at any depth
     /// (conversation logs, databases, settings of AI tools).
     let protectedFilesInTrees: [(tree: String, suffixes: [String], reason: String)]
+    /// Narrow carve-outs from subtree protections (e.g. Mail's attachment copies
+    /// inside the otherwise protected Mail container).
+    let protectionExceptions: [String]
     /// User-configured exclusions (subtree).
     var exclusions: [String]
 
@@ -45,7 +48,7 @@ struct SafetyPolicy: Sendable {
             p(".npm"), p(".gradle"), p(".android"), p(".expo"), p(".cache"),
             p("Library/pnpm/store"), p(".yarn/berry/cache"), p(".Trash"),
             p(".m2"), p(".cocoapods"), p(".cargo"), p(".pub-cache"), p(".bun"), p(".node-gyp"),
-            p(".electron-gyp"), p(".nuget"), p(".composer"), p("Library/iTunes"),
+            p(".electron-gyp"), p(".nuget"), p(".composer"), p("Library/iTunes"), p("Desktop"),
             p(".claude"), p(".codex"), p(".ollama"), p(".lmstudio"),
             p("Library/Application Support/Cursor"), p("Library/Application Support/Claude"),
             p("Library/Application Support/Code"),
@@ -135,6 +138,7 @@ struct SafetyPolicy: Sendable {
             ".Trashes": "볼륨 휴지통", ".Spotlight-V100": "Spotlight 색인", ".DocumentRevisions-V100": "문서 버전",
             ".fseventsd": "파일 시스템 이벤트",
         ]
+        protectionExceptions = [p("Library/Containers/com.apple.mail/Data/Library/Mail Downloads")]
         protectedFilesInTrees = [
             (p(".codex"), [".sqlite", ".sqlite-wal", ".sqlite-shm", ".jsonl", ".json", ".toml", ".md"], "Codex 기록·설정"),
             (p(".claude"), [".jsonl", ".json", ".md", ".sqlite"], "Claude Code 기록·설정"),
@@ -165,7 +169,8 @@ struct SafetyPolicy: Sendable {
         for rule in protectedFilesInTrees where PathUtilities.isStrictDescendant(path, of: rule.tree) {
             if rule.suffixes.contains(where: { lowerName.hasSuffix($0) }) { return rule.reason }
         }
-        for prot in protections {
+        let exempt = protectionExceptions.contains { PathUtilities.isSameOrDescendant(path, of: $0) }
+        for prot in protections where !exempt {
             if path == prot.path { return prot.reason }
             // Removing an ancestor of a protected location would remove it too.
             if PathUtilities.isStrictDescendant(prot.path, of: path) { return "\(prot.reason) 포함" }

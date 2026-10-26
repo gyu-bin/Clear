@@ -4,7 +4,7 @@ import Foundation
 /// External tools Clear may invoke. Each resolves only from fixed, well-known
 /// locations — never from `PATH` or user input.
 enum TrustedTool: String, Codable, Sendable, CaseIterable {
-    case brew, docker, xcrun, git, ollama, pnpm
+    case brew, docker, xcrun, git, ollama, pnpm, launchctl
 
     var candidatePaths: [String] {
         let home = PathUtilities.realHomeDirectory.path
@@ -18,6 +18,7 @@ enum TrustedTool: String, Codable, Sendable, CaseIterable {
         case .ollama: return ["/usr/local/bin/ollama", "/opt/homebrew/bin/ollama",
                               "/Applications/Ollama.app/Contents/Resources/ollama"]
         case .pnpm: return [home + "/Library/pnpm/pnpm", "/opt/homebrew/bin/pnpm", "/usr/local/bin/pnpm"]
+        case .launchctl: return ["/bin/launchctl"]
         }
     }
 }

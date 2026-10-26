@@ -89,6 +89,8 @@ struct ClearCommands: Commands {
             ForEach(SidebarItem.allCases) { item in
                 if let key = item.shortcut {
                     Button(item.title) { model.selection = item }.keyboardShortcut(key, modifiers: [.command])
+                } else {
+                    Button(item.title) { model.selection = item }
                 }
             }
         }

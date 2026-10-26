@@ -14,6 +14,7 @@ final class AppModel {
     let applications = ApplicationsModel()
     let duplicates = DuplicatesModel()
     let largeFiles = LargeFilesModel()
+    let startup = StartupItemsModel()
     let freeSpace = FreeSpaceHistory()
 
     let fileSystem: FileSystemOperating
@@ -40,6 +41,8 @@ final class AppModel {
     var developerSelection: Set<String> = []
     var aiSelection: Set<String> = []
     var projectSelection: Set<String> = []
+    /// Selection on the Smart Cleanup ("정크") screen, across general, developer and AI results.
+    var junkSelection: Set<String> = []
 
     private(set) var isScanningMac = false
     /// Re-checked whenever the app becomes active (the user may have just granted it).
@@ -74,6 +77,7 @@ final class AppModel {
         applications.environment = self
         duplicates.environment = self
         largeFiles.environment = self
+        startup.environment = self
         history.prune(retentionDays: settingsStore.settings.historyRetentionDays)
         refreshVolume()
         if !isRunningTests {
@@ -208,6 +212,7 @@ final class AppModel {
         policy.addAllowedRoots(settings.projectFolders.map { URL(fileURLWithPath: $0.path) })
         policy.addAllowedRoots(duplicates.activeRoots)
         policy.addAllowedRoots(largeFiles.activeRoots)
+        policy.addAllowedRoots([ScreenshotLocator.folder(home: PathUtilities.realHomeDirectory)])
         return policy
     }
 
@@ -287,6 +292,27 @@ final class AppModel {
         }
     }
 
+    /// Smart Cleanup scan: everyday junk plus developer and AI tool caches (no storage breakdown).
+    func scanJunk() {
+        refreshVolume()
+        scanGeneral()
+        if settings.developerModeEnabled { scanDeveloper() }
+        if settings.aiToolsEnabled { scanAI() }
+    }
+
+    var isJunkScanning: Bool { general.isLoading || developer.isLoading || ai.isLoading }
+
+    func cancelJunkScan() {
+        for key in ["general", "developer", "ai"] { cancel(key) }
+    }
+
+    /// Everything the Smart Cleanup screen shows (respecting the feature switches).
+    var junkCandidates: [CleanupCandidate] {
+        (general.value?.candidates ?? [])
+            + (settings.developerModeEnabled ? developer.value?.flatMap(\.candidates) ?? [] : [])
+            + (settings.aiToolsEnabled ? ai.value?.flatMap(\.candidates) ?? [] : [])
+    }
+
     func cancelMacScan() {
         for key in ["storage", "general", "developer", "ai"] { cancel(key) }
     }
@@ -334,8 +360,10 @@ final class AppModel {
                     let id = c.title.split(separator: " ").first.map(String.init) ?? ""
                     return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) != nil
                 }
+                junkSelection.subtract(general.value?.candidates.map(\.id) ?? [])
                 general = .loaded(report, Date())
                 generalSelection = Set(report.candidates.filter(\.isDefaultSelected).map(\.id))
+                junkSelection.formUnion(generalSelection)
             } catch is CancellationError {
                 general = .idle
             } catch {
@@ -360,8 +388,10 @@ final class AppModel {
             })
             let reports = await Self.scanAdapters(Self.developerAdapters(), ctx: ctx)
             if Task.isCancelled { developer = .idle; return }
+            junkSelection.subtract(developer.value?.flatMap(\.candidates).map(\.id) ?? [])
             developer = .loaded(reports, Date())
             developerSelection = Set(reports.flatMap(\.candidates).filter(\.isDefaultSelected).map(\.id))
+            junkSelection.formUnion(developerSelection)
             updateLastScanSummary()
         }
         Task { await finish("developer", task) }
@@ -377,8 +407,10 @@ final class AppModel {
             })
             let reports = await Self.scanAdapters(AIToolAdapters.all(), ctx: ctx)
             if Task.isCancelled { ai = .idle; return }
+            junkSelection.subtract(ai.value?.flatMap(\.candidates).map(\.id) ?? [])
             ai = .loaded(reports, Date())
             aiSelection = Set(reports.flatMap(\.candidates).filter(\.isDefaultSelected).map(\.id))
+            junkSelection.formUnion(aiSelection)
             updateLastScanSummary()
         }
         Task { await finish("ai", task) }
@@ -493,10 +525,12 @@ final class AppModel {
         developerSelection.subtract(done)
         aiSelection.subtract(done)
         projectSelection.subtract(done)
+        junkSelection.subtract(done)
         if report.results.contains(where: { $0.category == .trash }) || report.trashedBytes > 0 { refreshTrashSize() }
         applications.didFinishCleanup(done)
         duplicates.didFinishCleanup(done)
         largeFiles.didFinishCleanup(done)
+        startup.didFinishCleanup(done)
         refreshVolume()
         updateLastScanSummary()
     }
