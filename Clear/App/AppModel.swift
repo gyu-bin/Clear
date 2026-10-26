@@ -33,6 +33,10 @@ final class AppModel {
     var developer: LoadState<[ToolReport]> = .idle
     var ai: LoadState<[ToolReport]> = .idle
     var projects: [String: LoadState<ProjectReport>] = [:]
+    /// Git repositories found automatically (not registered by the user).
+    private(set) var discoveredProjects: [String] = []
+    /// All projects analysed for Smart Cleanup (registered and discovered).
+    var projectScan: LoadState<[ProjectReport]> = .idle
     /// Size of `~/.Trash`; nil when unknown (no Full Disk Access).
     private(set) var trashBytes: Int64?
     private var trashMeasuredAt: Date?
@@ -210,6 +214,8 @@ final class AppModel {
     func makePolicy() -> SafetyPolicy {
         var policy = SafetyPolicy(exclusions: settings.excludedPaths)
         policy.addAllowedRoots(settings.projectFolders.map { URL(fileURLWithPath: $0.path) })
+        policy.addAllowedRoots(discoveredProjects.map { URL(fileURLWithPath: $0) })
+        policy.addAllowedRoots([GeneralCleanupScanner.defaultAgentScratchRoot])
         policy.addAllowedRoots(duplicates.activeRoots)
         policy.addAllowedRoots(largeFiles.activeRoots)
         policy.addAllowedRoots([ScreenshotLocator.folder(home: PathUtilities.realHomeDirectory)])
@@ -283,7 +289,10 @@ final class AppModel {
         refreshVolume()
         Task { @MainActor in
             var started: [(String, Task<Void, Never>)] = [("storage", scanStorage()), ("general", scanGeneral())]
-            if settings.developerModeEnabled { started.append(("developer", scanDeveloper())) }
+            if settings.developerModeEnabled {
+                started.append(("developer", scanDeveloper()))
+                started.append(("projects", scanProjects()))
+            }
             if settings.aiToolsEnabled { started.append(("ai", scanAI())) }
             for (_, task) in started { await task.value }
             isScanningMac = false
@@ -296,14 +305,51 @@ final class AppModel {
     func scanJunk() {
         refreshVolume()
         scanGeneral()
-        if settings.developerModeEnabled { scanDeveloper() }
+        if settings.developerModeEnabled { scanDeveloper(); scanProjects() }
         if settings.aiToolsEnabled { scanAI() }
     }
 
-    var isJunkScanning: Bool { general.isLoading || developer.isLoading || ai.isLoading }
+    var isJunkScanning: Bool { general.isLoading || developer.isLoading || ai.isLoading || projectScan.isLoading }
 
     func cancelJunkScan() {
-        for key in ["general", "developer", "ai"] { cancel(key) }
+        for key in ["general", "developer", "ai", "projects"] { cancel(key) }
+    }
+
+    /// Registered projects plus Git repositories found in the home folder.
+    var allProjectFolders: [ProjectFolder] {
+        let registered = settings.projectFolders
+        let known = Set(registered.map(\.path))
+        return registered + discoveredProjects.filter { !known.contains($0) }
+            .map { ProjectFolder(path: $0, bookmark: nil, addedAt: .distantPast) }
+    }
+
+    func isDiscovered(_ folder: ProjectFolder) -> Bool {
+        !settings.projectFolders.contains { $0.path == folder.path }
+    }
+
+    /// Finds projects, then analyses each one (build output, git-ignored outputs).
+    @discardableResult
+    func scanProjects() -> Task<Void, Never> {
+        let task = run("projects") { [self] in
+            projectScan = .loading(ScanProgress(phase: "개발 프로젝트 찾는 중"))
+            let found = await runOffMain { ProjectDiscovery.find() }
+            if Task.isCancelled { projectScan = .idle; return }
+            discoveredProjects = found
+            let ctx = await makeContext(progress: progressHandler { [weak self] p in
+                if self?.projectScan.isLoading == true { self?.projectScan = .loading(p) }
+            })
+            var reports: [ProjectReport] = []
+            for folder in allProjectFolders where FileManager.default.fileExists(atPath: folder.path) {
+                if Task.isCancelled { break }
+                let report = await ProjectAnalyzer().analyze(projectAt: URL(fileURLWithPath: folder.path), ctx: ctx)
+                projects[folder.path] = .loaded(report, Date())
+                reports.append(report)
+            }
+            if Task.isCancelled { projectScan = .idle; return }
+            projectScan = .loaded(reports.sorted { $0.cleanable > $1.cleanable }, Date())
+        }
+        Task { await finish("projects", task) }
+        return task
     }
 
     /// Everything the Smart Cleanup screen shows (respecting the feature switches).
@@ -311,10 +357,11 @@ final class AppModel {
         (general.value?.candidates ?? [])
             + (settings.developerModeEnabled ? developer.value?.flatMap(\.candidates) ?? [] : [])
             + (settings.aiToolsEnabled ? ai.value?.flatMap(\.candidates) ?? [] : [])
+            + (settings.developerModeEnabled ? projectScan.value?.flatMap(\.candidates) ?? [] : [])
     }
 
     func cancelMacScan() {
-        for key in ["storage", "general", "developer", "ai"] { cancel(key) }
+        for key in ["storage", "general", "developer", "ai", "projects"] { cancel(key) }
     }
 
     @discardableResult
@@ -352,6 +399,7 @@ final class AppModel {
                 let names = await runOffMain { AppCatalog.nameIndex() }
                 var scanner = GeneralCleanupScanner()
                 scanner.includeContainers = hasFullDiskAccess
+                if settings.aiToolsEnabled { scanner.agentScratchRoot = GeneralCleanupScanner.defaultAgentScratchRoot }
                 var report = try await scanner.scan(ctx, appNames: names)
                 // LaunchServices knows apps outside /Applications too (e.g. in ~/Downloads or
                 // built by Xcode). Anything it can still resolve is not a leftover.
@@ -450,6 +498,7 @@ final class AppModel {
 
     func analyzeAllProjects() {
         for folder in settingsStore.resolvedProjectFolders() { analyzeProject(folder) }
+        for folder in allProjectFolders where isDiscovered(folder) { analyzeProject(folder) }
     }
 
     // MARK: Aggregates
@@ -515,10 +564,14 @@ final class AppModel {
             for i in reports.indices { reports[i].candidates.removeAll { done.contains($0.id) } }
             ai = .loaded(reports, d)
         }
+        if case .loaded(var reports, let d) = projectScan {
+            for i in reports.indices { reports[i].candidates.removeAll { done.contains($0.id) } }
+            projectScan = .loaded(reports, d)
+        }
         for (key, state) in projects {
             if case .loaded(let r, let d) = state, r.candidates.contains(where: { done.contains($0.id) }) {
                 projects[key] = .loaded(r, d)
-                if let folder = settings.projectFolders.first(where: { $0.path == key }) { analyzeProject(folder) }
+                if let folder = allProjectFolders.first(where: { $0.path == key }) { analyzeProject(folder) }
             }
         }
         generalSelection.subtract(done)

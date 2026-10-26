@@ -21,7 +21,7 @@ struct DeveloperView: View {
                 } else {
                     Button { addProjects() } label: { Label("프로젝트 추가", systemImage: "plus") }
                     Button { model.analyzeAllProjects() } label: { Label("모두 분석", systemImage: "arrow.clockwise") }
-                        .disabled(model.settings.projectFolders.isEmpty)
+                        .disabled(model.allProjectFolders.isEmpty)
                 }
             }
         } content: {
@@ -78,7 +78,7 @@ private struct ProjectsView: View {
     @State private var selectedPath: String?
 
     var body: some View {
-        let folders = model.settings.projectFolders
+        let folders = model.allProjectFolders
         if folders.isEmpty {
             EmptyStateView(symbol: "folder.badge.plus", title: "등록된 프로젝트가 없습니다",
                            message: "프로젝트 폴더를 추가하면 소스·의존성·빌드 산출물·캐시를 나눠 보여 줍니다. 소스, .git, 환경 변수·키 파일은 정리 대상이 되지 않습니다.",
@@ -93,10 +93,12 @@ private struct ProjectsView: View {
                             .contextMenu {
                                 Button("분석") { model.analyzeProject(folder) }
                                 Button("Finder에서 보기") { FinderActions.reveal(folder.path) }
-                                Divider()
-                                Button("등록 해제") {
-                                    model.settingsStore.removeProjectFolder(folder)
-                                    model.projects[folder.path] = nil
+                                if !model.isDiscovered(folder) {
+                                    Divider()
+                                    Button("등록 해제") {
+                                        model.settingsStore.removeProjectFolder(folder)
+                                        model.projects[folder.path] = nil
+                                    }
                                 }
                             }
                     }

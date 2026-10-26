@@ -24,6 +24,11 @@ struct GeneralCleanupScanner: Sendable {
     var includeLeftovers = true
     /// Scan other apps' containers (only with Full Disk Access, otherwise macOS prompts per app).
     var includeContainers = false
+    /// Claude Code's per-session scratch folders (`/private/tmp/claude-<uid>`).
+    /// Must also be an allowed root of the policy.
+    var agentScratchRoot: URL?
+
+    static var defaultAgentScratchRoot: URL { URL(fileURLWithPath: "/private/tmp/claude-\(getuid())") }
 
     static let ownedLogFolders: Set<String> = ["Claude", "Cursor", "CoreSimulator", "JetBrains", "Google", "Homebrew"]
     static let installerExtensions: Set<String> = ["dmg", "pkg", "mpkg", "zip", "xip", "iso", "ipsw"]
@@ -51,6 +56,11 @@ struct GeneralCleanupScanner: Sendable {
             try Task.checkCancellation()
             ctx.progress(ScanProgress(phase: "앱 컨테이너의 캐시 분석 중"))
             scanContainerCaches(ctx, appNames: appNames, into: &report)
+        }
+        if let agentScratchRoot {
+            try Task.checkCancellation()
+            ctx.progress(ScanProgress(phase: "AI 에이전트 작업 폴더 분석 중"))
+            scanAgentScratch(ctx, root: agentScratchRoot, into: &report)
         }
         ctx.progress(ScanProgress(phase: "스크린샷 찾는 중"))
         scanScreenshots(ctx, into: &report)
@@ -182,6 +192,68 @@ struct GeneralCleanupScanner: Sendable {
                 impact: "해당 앱들이 캐시를 다시 만듭니다.", regenerable: true, minimumSize: 1024 * 1024)
             if let c = ctx.makeCandidate(at: caches, root: groups, spec: spec) { report.candidates.append(c) }
         }
+    }
+
+    /// Each Claude Code session gets `<root>/<encoded project path>/<session id>/`.
+    /// A session is offered only when nothing in it changed for a day, so a
+    /// running session's work is never proposed.
+    private func scanAgentScratch(_ ctx: ScanContext, root: URL, into report: inout GeneralScanReport) {
+        guard let canonical = PathUtilities.canonicalPath(root.path), ctx.policy.isAllowedRoot(canonical) else { return }
+        let base = URL(fileURLWithPath: canonical)
+        for project in ctx.children(of: base) ?? [] where ctx.isDirectory(project) {
+            let name = Self.agentProjectName(project.lastPathComponent)
+            for session in ctx.children(of: project) ?? [] where ctx.isDirectory(session) {
+                let spec = CandidateSpec(
+                    id: "agent-scratch:\(session.path)", title: "Claude Code 작업 폴더 · \(name)",
+                    category: .aiCache, ruleID: "general.agentScratch",
+                    risk: .review, riskReason: "끝난 Claude Code 세션이 남긴 임시 작업 파일",
+                    impact: "세션이 만든 복사본·빌드·실험 데이터가 사라집니다. 대화 기록(~/.claude)과 프로젝트 파일은 그대로입니다.",
+                    regenerable: false, preferredMethod: .trash, allowsPermanentRemoval: true,
+                    minimumSize: 10 * 1024 * 1024)
+                guard var c = ctx.makeCandidate(at: session, root: base, spec: spec) else { continue }
+                let newest = c.size.newestModification ?? c.lastModified
+                if c.risk != .blocked, newest.map({ ctx.scannedAt.timeIntervalSince($0) < 86_400 }) ?? true {
+                    c.risk = .blocked
+                    c.riskReason = "최근 24시간 안에 쓰인 폴더 — 진행 중인 세션일 수 있음"
+                }
+                report.candidates.append(c)
+            }
+        }
+    }
+
+    /// Claude Code names the folder after the project path with every character
+    /// other than ASCII letters and digits turned into "-". Rebuild the real path by
+    /// matching existing folders; fall back to the last part of the name.
+    static func agentProjectName(_ encoded: String) -> String {
+        if let path = decodeAgentProjectPath(encoded) {
+            return path == PathUtilities.realHomeDirectory.path ? "홈 폴더" : (path as NSString).lastPathComponent
+        }
+        return encoded.split(separator: "-").last.map(String.init) ?? encoded
+    }
+
+    static func decodeAgentProjectPath(_ encoded: String) -> String? {
+        func encode(_ s: String) -> String {
+            String(s.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        }
+        func walk(_ dir: String, _ rest: Substring, depth: Int) -> String? {
+            if rest.isEmpty { return dir }
+            guard depth < 16, rest.hasPrefix("-") else { return nil }
+            let remaining = rest.dropFirst()
+            let children = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
+                .sorted { $0.count > $1.count }
+            for child in children {
+                let e = encode(child)
+                guard !e.isEmpty, remaining.hasPrefix(e) else { continue }
+                let after = remaining.dropFirst(e.count)
+                guard after.isEmpty || after.hasPrefix("-") else { continue }
+                let next = dir == "/" ? "/" + child : dir + "/" + child
+                var isDir: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: next, isDirectory: &isDir), isDir.boolValue else { continue }
+                if let found = walk(next, after, depth: depth + 1) { return found }
+            }
+            return nil
+        }
+        return walk("/", Substring(encoded), depth: 0)
     }
 
     /// "com.apple.mediaanalysisd" → "mediaanalysisd", "ABCDE.com.example.shared" → "shared".
