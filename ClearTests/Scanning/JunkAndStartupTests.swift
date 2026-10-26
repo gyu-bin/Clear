@@ -38,6 +38,41 @@ struct JunkCategoryTests {
     }
 }
 
+@Suite("Sandboxed app caches")
+struct ContainerCacheTests {
+    @Test("Container and group-container caches are found only with Full Disk Access; app data and Mail stay out")
+    func containerCaches() async throws {
+        let temp = try TempDirectory()
+        let env = try FakeEnvironment(temp)
+        let mb = 2 * 1024 * 1024
+        try temp.file("home/Library/Containers/com.example.Notes/Data/Library/Caches/img/a", size: mb)
+        try temp.file("home/Library/Containers/com.example.Notes/Data/Documents/note.txt", size: mb)
+        try temp.file("home/Library/Containers/com.example.Tiny/Data/Library/Caches/x", size: 1024)
+        try temp.file("home/Library/Containers/com.apple.mail/Data/Library/Caches/m", size: mb)
+        try temp.file("home/Library/Group Containers/ABCDE.com.example.shared/Library/Caches/s", size: mb)
+
+        var scanner = GeneralCleanupScanner()
+        let without = try await scanner.scan(env.context(), appNames: [:])
+        #expect(!without.candidates.contains { $0.id.hasPrefix("container-cache:") || $0.id.hasPrefix("group-cache:") })
+
+        scanner.includeContainers = true
+        let report = try await scanner.scan(env.context(), appNames: ["com.example.Notes": "Notes Pro"])
+        let notes = try #require(report.candidates.first { $0.id == "container-cache:com.example.Notes" })
+        #expect(notes.title == "Notes Pro 캐시")
+        #expect(notes.risk == .review)
+        #expect(notes.path?.hasSuffix("/Data/Library/Caches") == true)
+        let group = try #require(report.candidates.first { $0.id == "group-cache:ABCDE.com.example.shared" })
+        #expect(group.title == "shared 공유 캐시")
+        #expect(GeneralCleanupScanner.readableName("com.apple.mediaanalysisd") == "mediaanalysisd")
+        // Under 1 MB is ignored; Mail's container is protected.
+        #expect(!report.candidates.contains { $0.id == "container-cache:com.example.Tiny" })
+        let mail = report.candidates.first { $0.id == "container-cache:com.apple.mail" }
+        #expect(mail == nil || mail?.risk == .blocked)
+        // Nothing outside a Caches folder is ever offered.
+        #expect(!report.candidates.contains { $0.path?.contains("/Data/Documents") == true })
+    }
+}
+
 @Suite("Startup items — launchctl output parsing")
 struct StartupParsingTests {
     let scanner = StartupScanner(home: URL(fileURLWithPath: "/tmp"), runner: MockCommandRunner())

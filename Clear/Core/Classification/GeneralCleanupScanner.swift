@@ -47,6 +47,11 @@ struct GeneralCleanupScanner: Sendable {
             LeftoverScanner(installedBundleIDs: Set(appNames.keys), includeContainers: includeContainers)
                 .scan(ctx, into: &report)
         }
+        if includeContainers {
+            try Task.checkCancellation()
+            ctx.progress(ScanProgress(phase: "앱 컨테이너의 캐시 분석 중"))
+            scanContainerCaches(ctx, appNames: appNames, into: &report)
+        }
         ctx.progress(ScanProgress(phase: "스크린샷 찾는 중"))
         scanScreenshots(ctx, into: &report)
         if includeContainers { scanMailDownloads(ctx, into: &report) }
@@ -132,6 +137,57 @@ struct GeneralCleanupScanner: Sendable {
             }
             if let c = ctx.makeCandidate(at: child, root: root, spec: spec) { report.candidates.append(c) }
         }
+    }
+
+    /// Caches of sandboxed apps (`Containers/<id>/Data/Library/Caches`) and of app
+    /// groups (`Group Containers/<group>/Library/Caches`). Same rules as
+    /// `~/Library/Caches`: only known caches are SAFE, Apple's are REVIEW,
+    /// account/sync caches stay blocked. Needs Full Disk Access.
+    private func scanContainerCaches(_ ctx: ScanContext, appNames: [String: String], into report: inout GeneralScanReport) {
+        let containers = ctx.url("Library/Containers")
+        for container in ctx.children(of: containers) ?? [] {
+            let id = container.lastPathComponent
+            guard !id.hasPrefix("."), !CacheKnowledgeBase.ownedByAdapters.contains(id) else { continue }
+            let caches = container.appendingPathComponent("Data/Library/Caches")
+            guard ctx.isDirectory(caches) else { continue }
+            let appName = appNames[id]
+            var spec = CandidateSpec(
+                id: "container-cache:\(id)", title: "\(appName ?? Self.readableName(id)) 캐시",
+                category: .appCache, ruleID: "general.containerCaches",
+                risk: .review, riskReason: "샌드박스 앱의 캐시 — 앱이 다시 만듭니다",
+                impact: "앱이 다음 실행 시 캐시를 다시 만듭니다. 처음 실행이 잠시 느려질 수 있습니다.",
+                regenerable: true, guards: [.app(id, appName ?? id)], minimumSize: 1024 * 1024)
+            if let reason = CacheKnowledgeBase.blocked[id] {
+                spec.risk = .blocked
+                spec.riskReason = "보호됨: \(reason)"
+            } else if CacheKnowledgeBase.knownRegenerable[id] != nil {
+                spec.risk = .safe
+                spec.riskReason = "검증된 재생성 가능 캐시"
+            } else if id.hasPrefix("com.apple.") {
+                spec.category = .systemCache
+                spec.riskReason = "macOS 구성요소의 캐시 — 다시 만들어지지만 그동안 사진 분석 등 작업이 다시 실행될 수 있음"
+            }
+            if let c = ctx.makeCandidate(at: caches, root: containers, spec: spec) { report.candidates.append(c) }
+        }
+        let groups = ctx.url("Library/Group Containers")
+        for group in ctx.children(of: groups) ?? [] {
+            let name = group.lastPathComponent
+            guard !name.hasPrefix(".") else { continue }
+            let caches = group.appendingPathComponent("Library/Caches")
+            guard ctx.isDirectory(caches) else { continue }
+            let spec = CandidateSpec(
+                id: "group-cache:\(name)", title: "\(Self.readableName(name)) 공유 캐시",
+                category: name.contains("com.apple") ? .systemCache : .appCache, ruleID: "general.groupContainerCaches",
+                risk: .review, riskReason: "같은 개발사의 여러 앱이 함께 쓰는 캐시",
+                impact: "해당 앱들이 캐시를 다시 만듭니다.", regenerable: true, minimumSize: 1024 * 1024)
+            if let c = ctx.makeCandidate(at: caches, root: groups, spec: spec) { report.candidates.append(c) }
+        }
+    }
+
+    /// "com.apple.mediaanalysisd" → "mediaanalysisd", "ABCDE.com.example.shared" → "shared".
+    static func readableName(_ identifier: String) -> String {
+        let last = identifier.split(separator: ".").last.map(String.init) ?? identifier
+        return last.isEmpty ? identifier : last
     }
 
     /// Screenshots and screen recordings in the folder macOS saves them to.

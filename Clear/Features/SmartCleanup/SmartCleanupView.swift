@@ -7,9 +7,6 @@ struct SmartCleanupView: View {
     @Environment(\.appModel) private var model
     @State private var showDetails = false
     @State private var group: JunkGroup?
-    @State private var filter: RiskFilter = .all
-    @State private var search = ""
-    @State private var focused: CleanupCandidate.ID?
 
     var body: some View {
         FixedPage(title: "스마트 청소", subtitle: model.general.date.map { "\($0.formatted(.relative(presentation: .named))) 스캔" }) {
@@ -28,7 +25,11 @@ struct SmartCleanupView: View {
                 ErrorStateView(message: error) { model.scanJunk() }.padding(ClearMetrics.pagePadding)
                 Spacer()
             } else if let report = model.general.value {
-                if showDetails { details(report) } else { JunkSummary(report: report, showDetails: openDetails) }
+                if showDetails {
+                    JunkDetailView(report: report, back: { showDetails = false }, group: $group)
+                } else {
+                    JunkSummary(report: report, showDetails: openDetails)
+                }
             } else {
                 EmptyStateView(symbol: "sparkles", title: "정크 파일을 찾아보세요",
                                message: "캐시·로그·브라우저 캐시·Xcode와 개발 도구 파일·스크린샷·삭제된 앱의 잔여 파일까지 한 번에 찾습니다. 스캔은 읽기만 합니다.",
@@ -40,48 +41,7 @@ struct SmartCleanupView: View {
 
     private func openDetails(_ g: JunkGroup?) {
         group = g
-        focused = nil
         showDetails = true
-    }
-
-    @ViewBuilder
-    private func details(_ report: GeneralScanReport) -> some View {
-        @Bindable var model = model
-        let all = model.junkCandidates
-        let visible = all.filter {
-            (group == nil || JunkGroup.of($0) == group) && filter.matches($0)
-                && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.subtitle.localizedCaseInsensitiveContains(search))
-        }
-        ControlBar {
-            Button { showDetails = false } label: { Label("요약", systemImage: "chevron.left") }.buttonStyle(.borderless)
-            Picker("종류", selection: $group) {
-                Text("모든 종류").tag(JunkGroup?.none)
-                Divider()
-                ForEach(JunkGroup.allCases) { g in Text(g.title).tag(JunkGroup?.some(g)) }
-            }
-            .fixedSize()
-            Picker("위험도", selection: $filter) { ForEach(RiskFilter.allCases) { Text($0.title).tag($0) } }
-                .pickerStyle(.segmented).fixedSize()
-            Spacer()
-            SearchField(prompt: "항목 검색", text: $search)
-        }
-        .labelsHidden()
-        if !report.restrictedLocations.isEmpty {
-            PermissionNoticeView(title: "접근이 제한된 위치 \(report.restrictedLocations.count)곳은 제외했습니다",
-                                 message: "크기를 알 수 없어 정리 후보에 넣지 않았습니다.", paths: report.restrictedLocations)
-                .padding(.horizontal, ClearMetrics.pagePadding).padding(.vertical, Space.s)
-            Divider()
-        }
-        if visible.isEmpty {
-            EmptyStateView(symbol: "line.3.horizontal.decrease", title: "해당하는 항목이 없습니다", message: "종류·위험도·검색어를 바꿔 보세요.")
-                .frame(maxHeight: .infinity)
-        } else {
-            CandidateTable(candidates: visible, checked: $model.junkSelection, focused: $focused)
-                .candidateInspector($focused, candidates: all)
-        }
-        CleanupActionBar(candidates: all, checked: $model.junkSelection) {
-            model.cleanup.review(title: "스마트 청소", candidates: all.filter { model.junkSelection.contains($0.id) })
-        }
     }
 }
 
