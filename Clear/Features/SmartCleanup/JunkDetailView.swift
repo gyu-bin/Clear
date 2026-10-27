@@ -76,6 +76,15 @@ struct JunkDetailView: View {
                         HStack(alignment: .firstTextBaseline) {
                             Text(current.title).font(ClearFont.pageTitle)
                             Spacer()
+                            // Selects what the list shows (search applied); blocked items are skipped.
+                            let shown = items.filter { $0.risk.isSelectable }.map(\.id)
+                            let allShown = !shown.isEmpty && shown.allSatisfy { model.junkSelection.contains($0) }
+                            Button(allShown ? "전체 해제" : "전체 선택") {
+                                if allShown { model.junkSelection.subtract(shown) } else { model.junkSelection.formUnion(shown) }
+                            }
+                            .buttonStyle(.borderless).font(ClearFont.callout)
+                            .disabled(shown.isEmpty)
+                            .help(search.isEmpty ? "이 종류에서 선택할 수 있는 항목을 모두 선택합니다" : "검색된 항목만 선택합니다")
                             Menu(sortBySize ? "크기순" : "이름순") {
                                 Button("크기순") { sortBySize = true }
                                 Button("이름순") { sortBySize = false }
