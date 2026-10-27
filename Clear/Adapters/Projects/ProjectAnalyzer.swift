@@ -62,11 +62,20 @@ struct ProjectAnalyzer: Sendable {
     /// system's own caches (Xcode's build.db, test result metadata.db).
     static let databaseExtensions: Set<String> = ["sqlite", "db", "realm"]
 
-    static func isSensitive(_ name: String, includingDatabases: Bool = true) -> Bool {
+    /// Certificates that are public by nature. Builds copy them in (Expo's root
+    /// certificate, test keys of checked-out packages); they are not the user's secrets.
+    static let publicCertificateExtensions: Set<String> = ["pem", "cer"]
+    /// Downloaded package sources inside build output (SwiftPM checkouts).
+    static let buildDependencyNames: Set<String> = ["SourcePackages", "checkouts"]
+
+    /// `forBuildOutput` relaxes the check for generated folders: their databases are
+    /// build caches and their certificates are copies, but private keys still count.
+    static func isSensitive(_ name: String, forBuildOutput: Bool = false) -> Bool {
         if sensitiveNames.contains(name) { return true }
         if name == ".env" || name.hasPrefix(".env.") { return true }
         let ext = (name as NSString).pathExtension.lowercased()
-        return sensitiveExtensions.contains(ext) || (includingDatabases && databaseExtensions.contains(ext))
+        if forBuildOutput { return sensitiveExtensions.subtracting(publicCertificateExtensions).contains(ext) }
+        return sensitiveExtensions.contains(ext) || databaseExtensions.contains(ext)
     }
 
     func analyze(projectAt url: URL, ctx: ScanContext) async -> ProjectReport {
@@ -114,7 +123,7 @@ struct ProjectAnalyzer: Sendable {
                 risk = .blocked; reason = "Git이 추적하는 파일이 포함되어 있음"
             }
             if risk != .blocked, item.role != .dependency,
-               let secret = Self.findSensitiveFile(in: target.path, includingDatabases: item.role != .build) {
+               let secret = Self.findSensitiveFile(in: target.path, forBuildOutput: item.role == .build) {
                 risk = .blocked; reason = "민감한 파일 포함: \(PathUtilities.abbreviated(secret))"
             }
             let spec = CandidateSpec(
@@ -139,6 +148,10 @@ struct ProjectAnalyzer: Sendable {
                 if c.category == .projectDependencies { dependencies += c.size.allocated } else { build += c.size.allocated }
                 candidates.append(c)
             }
+        }
+        for c in await looseOutputs(root: root, path: path, isGit: isGit, covered: candidates.compactMap(\.path), guards: guards, ctx: ctx) {
+            build += c.size.allocated
+            candidates.append(c)
         }
         if !isGit { notes.append("Git 저장소가 아니므로 추적 여부를 확인할 수 없습니다. 생성 폴더만 후보로 표시합니다.") }
         if total.inaccessibleCount > 0 { notes.append("일부 폴더에 접근할 수 없어 크기가 실제보다 작게 표시될 수 있습니다.") }
@@ -210,11 +223,81 @@ struct ProjectAnalyzer: Sendable {
                 if await isTrackedByGit(rel, in: path, runner: ctx.commandRunner) {
                     c.risk = .blocked; c.riskReason = "Git이 추적하는 파일이 포함되어 있음"
                 } else if !isDependency, ctx.isDirectory(target),
-                          let secret = Self.findSensitiveFile(in: target.path, includingDatabases: !isBuild) {
+                          let secret = Self.findSensitiveFile(in: target.path, forBuildOutput: isBuild) {
                     c.risk = .blocked; c.riskReason = "민감한 파일 포함: \(PathUtilities.abbreviated(secret))"
                 }
             }
             taken.append(canonical)
+            out.append(c)
+        }
+        return out.sorted { $0.estimatedBytes > $1.estimatedBytes }
+    }
+
+    // MARK: Build output found by content
+
+    /// An Xcode build folder (what `-derivedDataPath` writes), whatever it is named:
+    /// it has Xcode's `info.plist` next to `Build` or `ModuleCache.noindex`.
+    static func isXcodeBuildFolder(_ path: String) -> Bool {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: path + "/info.plist") else { return false }
+        for marker in ["Build/Products", "Build/Intermediates.noindex", "ModuleCache.noindex"] {
+            if fm.fileExists(atPath: path + "/" + marker, isDirectory: &isDir), isDir.boolValue { return true }
+        }
+        return false
+    }
+
+    static let distributionExtensions: Set<String> = ["apk", "aab", "ipa"]
+    static let looseSearchDepth = 3
+
+    /// Xcode build folders with any name (`.myapp-build`), and — outside Git, where
+    /// nothing says what is generated — app packages (apk/aab/ipa) left in the project.
+    func looseOutputs(root: URL, path: String, isGit: Bool, covered: [String], guards: [ProcessGuard], ctx: ScanContext) async -> [CleanupCandidate] {
+        var buildFolders: [String] = []
+        var packages: [String] = []
+        let skipped = Self.dependencyNames.union(Self.skippedComponents).union(["Build", "Products"])
+        func visit(_ dir: String, depth: Int) {
+            guard depth <= Self.looseSearchDepth, !Task.isCancelled,
+                  let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
+            for name in names {
+                let child = dir + "/" + name
+                guard let type = try? FileManager.default.attributesOfItem(atPath: child)[.type] as? FileAttributeType else { continue }
+                if type == .typeDirectory {
+                    if skipped.contains(name) || name.hasPrefix(".env") { continue }
+                    if Self.isXcodeBuildFolder(child) { buildFolders.append(child); continue }
+                    if ["xcodeproj", "xcworkspace", "app", "xcarchive", "xcresult"].contains((name as NSString).pathExtension) { continue }
+                    visit(child, depth: depth + 1)
+                } else if type == .typeRegular, !isGit, Self.distributionExtensions.contains((name as NSString).pathExtension.lowercased()) {
+                    packages.append(child)
+                }
+            }
+        }
+        visit(path, depth: 1)
+
+        var out: [CleanupCandidate] = []
+        let found = buildFolders.map { ($0, true) } + packages.map { ($0, false) }
+        for (itemPath, isBuildFolder) in found {
+            let canonical = PathUtilities.canonicalPath(itemPath) ?? itemPath
+            if covered.contains(where: { PathUtilities.isSameOrDescendant(canonical, of: $0) || PathUtilities.isSameOrDescendant($0, of: canonical) }) { continue }
+            let rel = String(canonical.dropFirst(path.count + 1))
+            let spec = CandidateSpec(
+                id: "project:\(path)/\(rel)", title: rel,
+                subtitle: PathUtilities.abbreviated(canonical, home: ctx.home.path),
+                category: .projectBuild,
+                ruleID: isBuildFolder ? "project.xcodeBuildFolder" : "project.appPackage",
+                risk: isBuildFolder ? .review : .manual,
+                riskReason: isBuildFolder ? "Xcode 빌드 폴더 — 다음 빌드 때 다시 만들어짐"
+                    : "빌드한 앱 파일 — 배포·테스트용으로 보관 중인지 확인하세요",
+                impact: isBuildFolder ? "다음 빌드가 처음부터 다시 수행되어 오래 걸릴 수 있습니다."
+                    : "휴지통으로 이동합니다. 필요하면 휴지통에서 되돌릴 수 있습니다.",
+                regenerable: isBuildFolder, guards: guards,
+                preferredMethod: isBuildFolder ? .permanent : .trash,
+                allowsPermanentRemoval: isBuildFolder,
+                minimumSize: Self.ignoredMinimumSize)
+            guard var c = ctx.makeCandidate(at: URL(fileURLWithPath: canonical), root: root, spec: spec) else { continue }
+            if c.risk != .blocked, isGit, await isTrackedByGit(rel, in: path, runner: ctx.commandRunner) {
+                c.risk = .blocked; c.riskReason = "Git이 추적하는 파일이 포함되어 있음"
+            }
             out.append(c)
         }
         return out.sorted { $0.estimatedBytes > $1.estimatedBytes }
@@ -230,15 +313,21 @@ struct ProjectAnalyzer: Sendable {
     }
 
     /// First secret-looking file found (stops early). Skips installed dependencies.
-    static func findSensitiveFile(in path: String, includingDatabases: Bool = true) -> String? {
+    static func findSensitiveFile(in path: String, forBuildOutput: Bool = false) -> String? {
         var found: String?
         try? FTSWalker(root: path).walk { entry in
             let name = (entry.path as NSString).lastPathComponent
             // Installed packages ship public certificates and test keys; they are not the user's secrets.
-            if entry.kind == .directoryPre, entry.level > 0, dependencyNames.contains(name) || name == "site-packages" {
+            if entry.kind == .directoryPre, entry.level > 0,
+               dependencyNames.contains(name) || name == "site-packages" || (forBuildOutput && buildDependencyNames.contains(name)) {
                 return .skipDescendants
             }
-            if entry.kind == .file, isSensitive(name, includingDatabases: includingDatabases) { found = entry.path; return .stop }
+            // Built app bundles carry a copy of their provisioning profile; not a source secret.
+            if entry.kind == .directoryPre, entry.level > 0,
+               ["app", "appex", "framework", "xcarchive"].contains((name as NSString).pathExtension) {
+                return .skipDescendants
+            }
+            if entry.kind == .file, isSensitive(name, forBuildOutput: forBuildOutput) { found = entry.path; return .stop }
             return .continue
         }
         return found

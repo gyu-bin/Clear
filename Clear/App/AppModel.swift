@@ -215,7 +215,9 @@ final class AppModel {
         var policy = SafetyPolicy(exclusions: settings.excludedPaths)
         policy.addAllowedRoots(settings.projectFolders.map { URL(fileURLWithPath: $0.path) })
         policy.addAllowedRoots(discoveredProjects.map { URL(fileURLWithPath: $0) })
-        policy.addAllowedRoots([GeneralCleanupScanner.defaultAgentScratchRoot])
+        policy.addAllowedRoots([GeneralCleanupScanner.defaultAgentScratchRoot, GeneralCleanupScanner.defaultSharedTempRoot])
+        policy.addProtection("/private/tmp", scope: .exact, reason: "공용 임시 폴더 자체")
+        policy.addProtection(GeneralCleanupScanner.defaultAgentScratchRoot.path, scope: .exact, reason: "Claude Code 임시 폴더 자체")
         policy.addAllowedRoots(duplicates.activeRoots)
         policy.addAllowedRoots(largeFiles.activeRoots)
         policy.addAllowedRoots([ScreenshotLocator.folder(home: PathUtilities.realHomeDirectory)])
@@ -400,6 +402,7 @@ final class AppModel {
                 var scanner = GeneralCleanupScanner()
                 scanner.includeContainers = hasFullDiskAccess
                 if settings.aiToolsEnabled { scanner.agentScratchRoot = GeneralCleanupScanner.defaultAgentScratchRoot }
+                scanner.sharedTempRoot = GeneralCleanupScanner.defaultSharedTempRoot
                 var report = try await scanner.scan(ctx, appNames: names)
                 // LaunchServices knows apps outside /Applications too (e.g. in ~/Downloads or
                 // built by Xcode). Anything it can still resolve is not a leftover.

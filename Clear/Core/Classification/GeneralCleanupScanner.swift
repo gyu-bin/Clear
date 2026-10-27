@@ -29,6 +29,12 @@ struct GeneralCleanupScanner: Sendable {
     var agentScratchRoot: URL?
 
     static var defaultAgentScratchRoot: URL { URL(fileURLWithPath: "/private/tmp/claude-\(getuid())") }
+    /// The shared temp folder, where build scripts and AI agents leave Xcode build
+    /// folders and project copies. macOS only empties it at restart.
+    /// Must also be an allowed root of the policy.
+    var sharedTempRoot: URL?
+    static let defaultSharedTempRoot = URL(fileURLWithPath: "/private/tmp")
+    var sharedTempMinimum: Int64 = 50 * 1024 * 1024
 
     static let ownedLogFolders: Set<String> = ["Claude", "Cursor", "CoreSimulator", "JetBrains", "Google", "Homebrew"]
     static let installerExtensions: Set<String> = ["dmg", "pkg", "mpkg", "zip", "xip", "iso", "ipsw"]
@@ -61,6 +67,11 @@ struct GeneralCleanupScanner: Sendable {
             try Task.checkCancellation()
             ctx.progress(ScanProgress(phase: "AI 에이전트 작업 폴더 분석 중"))
             scanAgentScratch(ctx, root: agentScratchRoot, into: &report)
+        }
+        if let sharedTempRoot {
+            try Task.checkCancellation()
+            ctx.progress(ScanProgress(phase: "공용 임시 폴더 분석 중"))
+            scanSharedTemp(ctx, root: sharedTempRoot, into: &report)
         }
         ctx.progress(ScanProgress(phase: "스크린샷 찾는 중"))
         scanScreenshots(ctx, into: &report)
@@ -219,6 +230,86 @@ struct GeneralCleanupScanner: Sendable {
                 report.candidates.append(c)
             }
         }
+    }
+
+    /// Top-level items in the shared temp folder that belong to the user. Each is named
+    /// by what it holds; anything written in the last day is blocked as possibly in use.
+    private func scanSharedTemp(_ ctx: ScanContext, root: URL, into report: inout GeneralScanReport) {
+        guard let canonical = PathUtilities.canonicalPath(root.path), ctx.policy.isAllowedRoot(canonical) else { return }
+        let base = URL(fileURLWithPath: canonical)
+        let children = ctx.children(of: base) ?? []
+        for (index, child) in children.enumerated() {
+            if Task.isCancelled { return }
+            let name = child.lastPathComponent
+            ctx.progress(ScanProgress(phase: "공용 임시 폴더 분석 중", detail: name,
+                                      fraction: Double(index) / Double(max(1, children.count))))
+            // Claude Code's folder is offered per session; system items are never touched.
+            if name.hasPrefix(".") || name.hasPrefix("claude-") || name.hasPrefix("com.apple.") { continue }
+            guard let id = try? ctx.fileSystem.identity(atPath: child.path), id.ownerUID == getuid(),
+                  id.kind == .directory || id.kind == .file else { continue }
+            let kind = TempKind.of(child.path, isDirectory: id.kind == .directory)
+            let spec = CandidateSpec(
+                id: "shared-tmp:\(child.path)", title: "\(kind.title) · \(name)",
+                category: .sharedTemporary, ruleID: "general.sharedTmp.\(kind.rawValue)",
+                risk: kind.risk, riskReason: kind.reason, impact: kind.impact,
+                regenerable: kind.regenerable, preferredMethod: kind.allowsPermanentRemoval ? .permanent : .trash,
+                allowsPermanentRemoval: kind.allowsPermanentRemoval, minimumSize: sharedTempMinimum)
+            guard var c = ctx.makeCandidate(at: child, root: base, spec: spec) else { continue }
+            let newest = c.size.newestModification ?? c.lastModified
+            if c.risk != .blocked, newest.map({ ctx.scannedAt.timeIntervalSince($0) < 86_400 }) ?? true {
+                c.risk = .blocked
+                c.riskReason = "최근 24시간 안에 쓰인 항목 — 작업 중일 수 있음"
+            }
+            report.candidates.append(c)
+        }
+    }
+
+    enum TempKind: String {
+        case xcodeBuild, testResult, gitCopy, projectCopy, cache, other
+
+        static func of(_ path: String, isDirectory: Bool) -> TempKind {
+            guard isDirectory else { return .other }
+            let fm = FileManager.default
+            let name = (path as NSString).lastPathComponent
+            if ProjectAnalyzer.isXcodeBuildFolder(path) || name.hasSuffix(".noindex") { return .xcodeBuild }
+            if (name as NSString).pathExtension == "xcresult" { return .testResult }
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: path + "/.git", isDirectory: &isDir) { return .gitCopy }
+            let names = (try? fm.contentsOfDirectory(atPath: path)) ?? []
+            if names.contains(where: { ProjectDiscovery.projectMarkers.contains($0) || ["xcodeproj", "xcworkspace"].contains(($0 as NSString).pathExtension) }) {
+                return .projectCopy
+            }
+            if name.lowercased().contains("cache") { return .cache }
+            return .other
+        }
+
+        var title: String {
+            switch self {
+            case .xcodeBuild: "Xcode 빌드 폴더"
+            case .testResult: "Xcode 테스트 결과"
+            case .gitCopy: "Git 저장소 사본"
+            case .projectCopy: "프로젝트 사본"
+            case .cache: "캐시"
+            case .other: "임시 항목"
+            }
+        }
+        var risk: RiskLevel { self == .gitCopy ? .manual : .review }
+        var reason: String {
+            switch self {
+            case .xcodeBuild: "임시 위치에 만든 빌드 결과 — 다시 빌드하면 생김"
+            case .testResult: "지난 테스트 실행 결과"
+            case .gitCopy: "커밋하지 않았거나 올리지 않은 작업이 남아 있을 수 있음 — 직접 확인하세요"
+            case .projectCopy: "실험·검증용으로 복사한 프로젝트로 보임 — 원본은 그대로 있음"
+            case .cache: "도구가 임시로 쓴 캐시"
+            case .other: "하루 넘게 쓰이지 않은 임시 항목"
+            }
+        }
+        var impact: String {
+            allowsPermanentRemoval ? "필요하면 도구가 다시 만듭니다. Mac을 재시동해도 지워지는 위치입니다."
+                : "휴지통으로 이동합니다. 필요하면 휴지통에서 되돌릴 수 있습니다."
+        }
+        var regenerable: Bool { self == .xcodeBuild || self == .cache }
+        var allowsPermanentRemoval: Bool { self == .xcodeBuild || self == .cache || self == .testResult }
     }
 
     /// Claude Code names the folder after the project path with every character

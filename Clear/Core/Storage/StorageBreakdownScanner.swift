@@ -38,6 +38,9 @@ struct StorageBreakdownScanner: Sendable {
                      paths: [h + "/.ollama", h + "/.lmstudio", h + "/.cache/huggingface", h + "/.claude", h + "/.codex"]),
             Category(id: "icloud", title: "iCloud Drive(로컬 사본)", symbol: "icloud", paths: [h + "/Library/Mobile Documents"]),
             Category(id: "trash", title: "휴지통", symbol: "trash", paths: [h + "/.Trash"]),
+            Category(id: "appdata", title: "앱 데이터", symbol: "shippingbox",
+                     paths: [h + "/Library/Application Support", h + "/Library/Containers", h + "/Library/Group Containers"]),
+            Category(id: "tmp", title: "임시 작업 폴더", symbol: "tray.full", paths: ["/private/tmp"]),
         ]
         let personal: [(String, String, String)] = [
             ("Documents", "문서", "doc.text"), ("Desktop", "데스크탑", "menubar.dock.rectangle"),

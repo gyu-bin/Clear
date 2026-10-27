@@ -21,6 +21,7 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
     case systemCache
     case logs
     case temporary
+    case sharedTemporary
     case savedState
     case downloads
     case xcode
@@ -58,6 +59,7 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
         case .systemCache: "시스템 구성요소 캐시"
         case .logs: "로그"
         case .temporary: "임시 파일"
+        case .sharedTemporary: "공용 임시 폴더"
         case .savedState: "창 복원 데이터"
         case .downloads: "다운로드 폴더"
         case .xcode: "Xcode"
@@ -97,6 +99,7 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
         case .systemCache: "gearshape.2"
         case .logs: "doc.text"
         case .temporary: "clock.arrow.circlepath"
+        case .sharedTemporary: "tray.full"
         case .savedState: "macwindow.on.rectangle"
         case .downloads: "arrow.down.circle"
         case .xcode: "hammer"
@@ -132,7 +135,7 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
 
     var domain: CleanupDomain {
         switch self {
-        case .appCache, .systemCache, .logs, .temporary, .savedState, .downloads, .trash,
+        case .appCache, .systemCache, .logs, .temporary, .sharedTemporary, .savedState, .downloads, .trash,
              .orphanedAppData, .hiddenCache, .brokenLoginItem, .softwareUpdates, .largeFile,
              .browserCache, .screenshots, .mailAttachments, .startupItem: .general
         case .xcode, .simulator, .swiftPackages, .node, .expo, .gradle, .android, .homebrew, .docker: .developer

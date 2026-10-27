@@ -19,6 +19,8 @@ struct IgnoredOutputTests {
         try temp.file("home/Code/Game/mobile/out/data.bin", size: big)
         try temp.file("home/Code/Game/mobile/out/AuthKey.p8", size: 100)
         try temp.file("home/Code/Game/mobile/dist/TestResults/metadata.db", size: 100)
+        try temp.file("home/Code/Game/mobile/dist/assets/expo-root.pem", size: 100)
+        try temp.file("home/Code/Game/mobile/dist/SourcePackages/checkouts/Sparkle/test-key.p12", size: 100)
         try temp.file("home/Code/Game/renders/library.sqlite", size: 100)
         try temp.file("home/Code/Game/.claude/cache.bin", size: big)
         try temp.file("home/Code/Game/tiny/x", size: 1024)
@@ -110,5 +112,91 @@ struct AgentScratchTests {
         #expect(GeneralCleanupScanner.decodeAgentProjectPath(encoded) == canonical)
         #expect(GeneralCleanupScanner.agentProjectName(encoded) == "Don't Move")
         #expect(GeneralCleanupScanner.agentProjectName("-nowhere-at-all-Thing") == "Thing")
+    }
+}
+
+@Suite("Projects without Git, and build output found by what it contains")
+struct NonGitProjectTests {
+    @Test("Folders with a project file are discovered; a stray marker directly in a home folder is ignored")
+    func markerDiscovery() throws {
+        let temp = try TempDirectory()
+        try temp.file("home/Desktop/package.json", size: 10)
+        try temp.file("home/Desktop/Coding/App/package.json", size: 10)
+        try temp.file("home/Desktop/Coding/App/ios/Podfile", size: 10)
+        try temp.dir("home/Desktop/Coding/Mac/Mac.xcodeproj")
+        try temp.file("home/Desktop/Coding/Notes/readme.txt", size: 10)
+        let found = ProjectDiscovery.find(home: temp.url.appendingPathComponent("home"))
+        let names = Set(found.map { ($0 as NSString).lastPathComponent })
+        #expect(names == ["App", "Mac"])
+    }
+
+    @Test("Xcode build folders of any name are REVIEW; app packages outside Git are MANUAL and go to the Trash")
+    func looseOutputs() async throws {
+        let temp = try TempDirectory()
+        let env = try FakeEnvironment(temp)
+        let project = try temp.dir("home/Code/App")
+        let big = 21 * 1024 * 1024
+        try temp.file("home/Code/App/package.json", size: 10)
+        try temp.file("home/Code/App/.app-build/ios-simulator/info.plist", size: 10)
+        try temp.file("home/Code/App/.app-build/ios-simulator/Build/Products/Debug/App.app/App", size: big)
+        try temp.file("home/Code/App/.app-build/ios-simulator/Build/Products/Debug/App.app/embedded.mobileprovision", size: 10)
+        try temp.file("home/Code/App/artifacts/App-0.1.0.apk", size: big)
+        try temp.file("home/Code/App/node_modules/x/info.plist", size: 10)
+        try temp.file("home/Code/App/node_modules/x/Build/Products/a", size: big)
+
+        let report = await ProjectAnalyzer().analyze(projectAt: project, ctx: env.context(extraRoots: [project]))
+        func item(_ rel: String) -> CleanupCandidate? { report.candidates.first { $0.path?.hasSuffix("/App/" + rel) == true } }
+        let build = try #require(item(".app-build/ios-simulator"))
+        #expect(build.risk == .review)
+        #expect(build.category == .projectBuild)
+        let apk = try #require(item("artifacts/App-0.1.0.apk"))
+        #expect(apk.risk == .manual)
+        #expect(!apk.allowsPermanentRemoval)
+        #expect(item("node_modules/x") == nil)
+    }
+}
+
+@Suite("Shared temp folder (/private/tmp)")
+struct SharedTempTests {
+    @Test("Build folders, project copies and Git copies are named and graded; recent, small and agent items are handled")
+    func sharedTemp() async throws {
+        let temp = try TempDirectory()
+        let env = try FakeEnvironment(temp)
+        let root = try temp.dir("sharedtmp")
+        let old = Date().addingTimeInterval(-3 * 86_400)
+        let big = 51 * 1024 * 1024
+        try temp.file("sharedtmp/qa-derived/info.plist", size: 10, modified: old)
+        try temp.file("sharedtmp/qa-derived/Build/Products/a.bin", size: big, modified: old)
+        try temp.file("sharedtmp/app-copy/package.json", size: 10, modified: old)
+        try temp.file("sharedtmp/app-copy/node_modules/a.bin", size: big, modified: old)
+        try temp.file("sharedtmp/worktree/.git/HEAD", size: 10, modified: old)
+        try temp.file("sharedtmp/worktree/a.bin", size: big, modified: old)
+        try temp.file("sharedtmp/fresh/a.bin", size: big)
+        try temp.file("sharedtmp/small/a.bin", size: 1024, modified: old)
+        try temp.file("sharedtmp/claude-501/p/s/a.bin", size: big, modified: old)
+
+        var scanner = GeneralCleanupScanner()
+        scanner.includeLeftovers = false
+        scanner.sharedTempRoot = root
+        let report = try await scanner.scan(env.context(extraRoots: [root]), appNames: [:])
+        let items = report.candidates.filter { $0.category == .sharedTemporary }
+        let byName = Dictionary(uniqueKeysWithValues: items.map { (($0.path! as NSString).lastPathComponent, $0) })
+
+        let build = try #require(byName["qa-derived"])
+        #expect(build.risk == .review)
+        #expect(build.title == "Xcode 빌드 폴더 · qa-derived")
+        #expect(build.allowsPermanentRemoval)
+        let copy = try #require(byName["app-copy"])
+        #expect(copy.risk == .review)
+        #expect(!copy.allowsPermanentRemoval)
+        #expect(byName["worktree"]?.risk == .manual)
+        #expect(byName["fresh"]?.risk == .blocked)
+        #expect(byName["small"] == nil)
+        #expect(byName["claude-501"] == nil)
+        #expect(!items.contains { $0.isDefaultSelected })
+
+        // Without the root in the policy nothing is offered.
+        let without = try await scanner.scan(env.context(), appNames: [:])
+        #expect(!without.candidates.contains { $0.category == .sharedTemporary })
     }
 }

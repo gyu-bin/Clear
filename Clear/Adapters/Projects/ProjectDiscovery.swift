@@ -1,7 +1,8 @@
 import Foundation
 
-/// Finds Git repositories in the places people keep code, so projects show up
-/// without being registered first. Only folders are listed; nothing is read.
+/// Finds code projects in the places people keep code, so they show up without
+/// being registered first: Git repositories, and folders with a project file
+/// (package.json, Podfile, build.gradle, an Xcode project…). Only folder names are read.
 enum ProjectDiscovery {
     /// Home folders never searched (system data, media libraries, tool data).
     static let skippedHomeFolders: Set<String> = [
@@ -11,6 +12,16 @@ enum ProjectDiscovery {
     static let skippedNames: Set<String> = [
         "node_modules", "Pods", "build", "dist", "DerivedData", ".build", "vendor", "target",
     ]
+
+    /// Files that make a folder a project even without Git.
+    static let projectMarkers: Set<String> = [
+        "package.json", "Podfile", "Package.swift", "build.gradle", "build.gradle.kts", "settings.gradle",
+        "settings.gradle.kts", "Cargo.toml", "go.mod", "pyproject.toml", "pubspec.yaml", "project.godot",
+        "app.json", "Gemfile", "composer.json", "CMakeLists.txt",
+    ]
+    /// Project markers count from this depth (1 = a folder directly in home), so a
+    /// stray package.json in ~/Desktop does not swallow every project under it.
+    static let markerMinimumDepth = 2
 
     static func find(home: URL = PathUtilities.realHomeDirectory, maxDepth: Int = 4, limit: Int = 200) -> [String] {
         let fm = FileManager.default
@@ -28,7 +39,14 @@ enum ProjectDiscovery {
                 found.append(PathUtilities.canonicalPath(path) ?? path)
                 return
             }
-            guard depth < maxDepth, let names = try? fm.contentsOfDirectory(atPath: path) else { return }
+            guard let names = try? fm.contentsOfDirectory(atPath: path) else { return }
+            if depth >= markerMinimumDepth, names.contains(where: { name in
+                projectMarkers.contains(name) || ["xcodeproj", "xcworkspace"].contains((name as NSString).pathExtension)
+            }) {
+                found.append(PathUtilities.canonicalPath(path) ?? path)
+                return
+            }
+            guard depth < maxDepth else { return }
             for name in names.sorted() {
                 if name.hasPrefix(".") || skippedNames.contains(name) { continue }
                 let ext = (name as NSString).pathExtension.lowercased()
