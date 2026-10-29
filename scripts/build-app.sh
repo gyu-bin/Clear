@@ -37,9 +37,9 @@ rm -rf "$staging" && mkdir -p "$staging"
 ditto dist/Clear.app "$staging/Clear.app"
 ln -s /Applications "$staging/Applications"
 hdiutil create -volname "Clear $version" -srcfolder "$staging" -fs HFS+ \
-  -format UDZO -ov "dist/Clear-$version.dmg" >/dev/null
-[[ -n "$identity" ]] && codesign --sign "$identity" "dist/Clear-$version.dmg"
-echo "dist/Clear-$version.dmg"
+  -format UDZO -ov dist/Clear.dmg >/dev/null
+[[ -n "$identity" ]] && codesign --sign "$identity" dist/Clear.dmg
+echo "dist/Clear.dmg"
 if [[ "${1:-}" == "--install" ]]; then
   rm -rf /Applications/Clear.app
   ditto dist/Clear.app /Applications/Clear.app
