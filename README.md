@@ -15,11 +15,13 @@
 open Clear.xcodeproj
 ```
 
-또는 명령줄에서 Release 앱 만들기:
+또는 명령줄에서 Release 앱과 설치용 DMG 만들기:
 
 ```bash
 scripts/build-app.sh
 ```
+
+`dist/`에 `Clear.app`, `Clear.zip`, `Clear-<버전>.dmg`가 생깁니다. DMG를 열고 Clear를 Applications 폴더로 끌어다 놓으면 설치됩니다.
 
 ## 테스트
 

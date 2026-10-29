@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds a Release Clear.app into dist/ and zips it.
+# Builds a Release Clear.app into dist/, zips it, and makes a drag-to-install DMG.
 #
 # Signing: if an "Apple Development" certificate is in the keychain, the app is
 # signed with it. macOS privacy permissions (Full Disk Access, folder access)
@@ -29,6 +29,17 @@ rm -rf dist && mkdir -p dist
 ditto "$app" dist/Clear.app
 ditto -c -k --keepParent dist/Clear.app dist/Clear.zip
 codesign --verify --deep --strict dist/Clear.app && echo "signature ok"
+
+# DMG: the app plus an Applications shortcut, so it installs by dragging.
+version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/Clear.app/Contents/Info.plist)
+staging=build/dmg
+rm -rf "$staging" && mkdir -p "$staging"
+ditto dist/Clear.app "$staging/Clear.app"
+ln -s /Applications "$staging/Applications"
+hdiutil create -volname "Clear $version" -srcfolder "$staging" -fs HFS+ \
+  -format UDZO -ov "dist/Clear-$version.dmg" >/dev/null
+[[ -n "$identity" ]] && codesign --sign "$identity" "dist/Clear-$version.dmg"
+echo "dist/Clear-$version.dmg"
 if [[ "${1:-}" == "--install" ]]; then
   rm -rf /Applications/Clear.app
   ditto dist/Clear.app /Applications/Clear.app
