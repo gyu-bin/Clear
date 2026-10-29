@@ -14,8 +14,19 @@ final class DirectorySizer: @unchecked Sendable {
 
     /// Called every ~2,000 entries with (entries visited, current path).
     var progress: (@Sendable (Int, String) -> Void)?
+    /// Read APFS clone sharing so `estimatedReclaimable` excludes shared blocks.
+    /// Off for pure disk-usage views, where it would only cost time.
+    let checksClones: Bool
 
-    init() {}
+    /// Clone families seen in one measurement.
+    private struct Family {
+        let references: UInt32
+        var seen: UInt32 = 0
+        var sharedTotal: Int64 = 0
+        var sharedLargest: Int64 = 0
+    }
+
+    init(checksClones: Bool = true) { self.checksClones = checksClones }
 
     func measure(_ url: URL) throws -> SizeInfo {
         try measure(path: url.path)
@@ -40,6 +51,7 @@ final class DirectorySizer: @unchecked Sendable {
         }
 
         var visited = 0
+        var families: [UInt64: Family] = [:]
         try FTSWalker(root: path).walk { entry in
             visited += 1
             if visited % 2000 == 0 { progress?(visited, entry.path) }
@@ -50,6 +62,7 @@ final class DirectorySizer: @unchecked Sendable {
             case .file, .symlink, .other:
                 guard let st = entry.stat else { return .continue }
                 record(st, into: &info)
+                if checksClones, entry.kind == .file { recordClone(st, path: entry.path, families: &families, into: &info) }
             case .unreadableDirectory, .error:
                 info.inaccessibleCount += 1
             case .directoryPost, .cycle:
@@ -57,7 +70,29 @@ final class DirectorySizer: @unchecked Sendable {
             }
             return .continue
         }
+        // A family entirely inside the tree is freed once all its copies go;
+        // only the extra copies were double-counted.
+        for family in families.values {
+            info.sharedCloneBytes += family.seen >= family.references
+                ? family.sharedTotal - family.sharedLargest : family.sharedTotal
+        }
         return info
+    }
+
+    private func recordClone(_ st: stat, path: String, families: inout [UInt64: Family], into info: inout SizeInfo) {
+        let blocks = Int64(st.st_blocks) * 512
+        guard st.st_nlink == 1, blocks >= CloneInfo.minimumCheckedBytes,
+              let clone = CloneInfo.read(path: path), clone.privateBytes < blocks else { return }
+        let shared = blocks - clone.privateBytes
+        guard clone.referenceCount > 1, clone.cloneID != 0 else {
+            info.sharedCloneBytes += shared   // shares some extents with files we cannot track
+            return
+        }
+        var family = families[clone.cloneID] ?? Family(references: clone.referenceCount)
+        family.seen += 1
+        family.sharedTotal += shared
+        family.sharedLargest = max(family.sharedLargest, shared)
+        families[clone.cloneID] = family
     }
 
     private func record(_ st: stat, into info: inout SizeInfo) {

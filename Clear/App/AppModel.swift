@@ -193,7 +193,7 @@ final class AppModel {
         let generation = trashMeasureGeneration
         Task { @MainActor in
             let path = PathUtilities.realHomeDirectory.appendingPathComponent(".Trash").path
-            let size = await runOffMain { try? DirectorySizer().measure(path: path) }
+            let size = await runOffMain { try? DirectorySizer(checksClones: false).measure(path: path) }
             guard generation == trashMeasureGeneration else { return }
             // Unreadable Trash (no Full Disk Access) → unknown. A few unreadable items
             // inside still give a usable lower bound.

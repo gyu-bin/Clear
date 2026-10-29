@@ -217,6 +217,10 @@ private struct ItemRow: View {
                 VStack(alignment: .leading, spacing: Space.xs) {
                     Text(candidate.riskReason).font(ClearFont.caption).foregroundStyle(ClearColor.textSecondary)
                     Text(candidate.impact).font(ClearFont.caption).foregroundStyle(ClearColor.textTertiary)
+                    if candidate.size.sharedCloneBytes > 0 {
+                        Text("이 중 \(candidate.size.sharedCloneBytes.formattedBytes)는 다른 파일과 디스크를 공유하는 복제본이라 지워도 확보되지 않습니다. 표시된 크기는 실제로 확보될 양입니다.")
+                            .font(ClearFont.caption).foregroundStyle(ClearColor.textTertiary)
+                    }
                     if let children {
                         ForEach(children.prefix(10), id: \.name) { child in
                             HStack {

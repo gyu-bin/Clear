@@ -75,21 +75,38 @@ struct SafeRemover: Sendable {
                 throw RemovalIncomplete(stats: stats, path: canonicalPath)
             }
         } else {
+            let ownBytes = Self.ownBytes(st, directory: parentFD, name: name)
             guard unlinkat(parentFD, name, 0) == 0 else {
                 let code = errno
                 if code == EACCES || code == EPERM { throw FileSystemError.permissionDenied(canonicalPath) }
                 throw FileSystemError.posix(canonicalPath, code)
             }
-            account(st, into: &stats)
+            account(st, ownBytes: ownBytes, into: &stats)
         }
         return stats
     }
 
-    private func account(_ st: stat, into stats: inout RemovalStats) {
+    /// Blocks that removing this file gives back: an APFS clone keeps the blocks
+    /// it shares alive. Read before unlinking — once the other copies are gone,
+    /// the last one owns everything, so a whole clone family is counted once.
+    static func ownBytes(_ st: stat, directory: Int32, name: String) -> Int64? {
+        let blocks = Int64(st.st_blocks) * 512
+        guard (st.st_mode & S_IFMT) == S_IFREG, st.st_nlink == 1, blocks >= CloneInfo.minimumCheckedBytes,
+              let clone = CloneInfo.read(directory: directory, name: name) else { return nil }
+        return min(blocks, clone.privateBytes)
+    }
+
+    private func account(_ st: stat, ownBytes: Int64? = nil, into stats: inout RemovalStats) {
         stats.removedFiles += 1
         stats.logicalBytes += Int64(st.st_size)
         let blocks = Int64(st.st_blocks) * 512
-        if st.st_nlink > 1 { stats.sharedBytes += blocks } else { stats.freedBytes += blocks }
+        if st.st_nlink > 1 {
+            stats.sharedBytes += blocks
+        } else {
+            let own = ownBytes ?? blocks
+            stats.freedBytes += own
+            stats.sharedBytes += blocks - own
+        }
     }
 
     private func removeContents(of dirFD: Int32, device: Int32, displayPath: String, depth: Int,
@@ -137,8 +154,9 @@ struct SafeRemover: Sendable {
                     stats.failures.append("\(childPath): \(String(cString: strerror(errno)))")
                 }
             } else {
+                let ownBytes = Self.ownBytes(st, directory: dirFD, name: name)
                 if unlinkat(dirFD, name, 0) == 0 {
-                    account(st, into: &stats)
+                    account(st, ownBytes: ownBytes, into: &stats)
                 } else if errno != ENOENT {
                     stats.failures.append("\(childPath): \(String(cString: strerror(errno)))")
                 }

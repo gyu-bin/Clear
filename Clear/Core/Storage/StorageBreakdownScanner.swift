@@ -54,7 +54,7 @@ struct StorageBreakdownScanner: Sendable {
     }
 
     func scan(categories: [Category], volume: VolumeInfo, progress: @escaping @Sendable (ScanProgress) -> Void) async -> StorageBreakdown {
-        let sizer = DirectorySizer()
+        let sizer = DirectorySizer(checksClones: false)
         var segments: [StorageSegment] = []
         for (index, category) in categories.enumerated() {
             if Task.isCancelled { break }

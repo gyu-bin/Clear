@@ -130,3 +130,51 @@ struct DiskTreeScannerTests {
         #expect(rects[0].width * rects[0].height > rects[1].width * rects[1].height)
     }
 }
+
+@Suite("APFS clones — what removing a tree really frees")
+struct CloneSharingTests {
+    private func randomData(_ count: Int) -> Data {
+        Data((0..<count).map { _ in UInt8.random(in: 0...255) })
+    }
+
+    @Test("A clone of a file outside the tree frees nothing; clones that all sit inside free one copy")
+    func clones() throws {
+        let temp = try TempDirectory()
+        let original = try temp.file("keep/original.bin", data: randomData(1024 * 1024))
+        let inside = temp.url.appendingPathComponent("tree/copy.bin")
+        try FileManager.default.createDirectory(at: inside.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try #require(clonefile(original.path, inside.path, 0) == 0)   // the test volume is APFS
+        try temp.file("tree/own.bin", data: randomData(512 * 1024))
+
+        let tree = try DirectorySizer().measure(path: temp.url.appendingPathComponent("tree").path)
+        #expect(tree.sharedCloneBytes >= 1024 * 1024)
+        #expect(tree.estimatedReclaimable < 700 * 1024)
+        #expect(tree.estimatedReclaimable >= 512 * 1024)
+
+        // Both copies inside: removing the folder frees one copy.
+        let both = try DirectorySizer().measure(path: temp.url.path)
+        #expect(both.estimatedReclaimable >= (1024 + 512) * 1024)
+        #expect(both.estimatedReclaimable < (2 * 1024 + 512) * 1024)
+
+        // Disk-usage mode skips the check.
+        #expect(try DirectorySizer(checksClones: false).measure(path: temp.url.appendingPathComponent("tree").path).sharedCloneBytes == 0)
+        #expect(CloneInfo.read(path: inside.path)?.referenceCount == 2)
+    }
+
+    @Test("Removal counts a clone's shared blocks as not freed, and the last copy as freed")
+    func removal() throws {
+        let temp = try TempDirectory()
+        let original = try temp.file("keep/original.bin", data: randomData(1024 * 1024))
+        let copy = temp.url.appendingPathComponent("tree/copy.bin")
+        try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try #require(clonefile(original.path, copy.path, 0) == 0)
+
+        var st = stat()
+        #expect(lstat(copy.path, &st) == 0)
+        #expect(SafeRemover.ownBytes(st, directory: AT_FDCWD, name: copy.path) == 0)
+        try FileManager.default.removeItem(at: copy)
+        #expect(lstat(original.path, &st) == 0)
+        // The remaining copy now owns all of its blocks.
+        #expect((SafeRemover.ownBytes(st, directory: AT_FDCWD, name: original.path) ?? 0) >= 1024 * 1024)
+    }
+}
