@@ -64,6 +64,8 @@ struct CandidateSpec: Sendable {
     var warning: String?
     /// Drop the candidate if it is smaller than this.
     var minimumSize: Int64 = 1
+    /// Files removed together with the item (same allowed root). Missing ones are ignored.
+    var companions: [URL] = []
 }
 
 extension ScanContext {
@@ -104,9 +106,27 @@ extension ScanContext {
         }
         let running = processes.runningGuards(spec.guards)
 
+        var companions: [PathTarget] = []
+        for companion in spec.companions {
+            guard let original = try? fileSystem.identity(atPath: companion.path), original.kind != .symlink,
+                  let path = fileSystem.canonicalPath(companion.path),
+                  let id = try? fileSystem.identity(atPath: path), id.isSameObject(as: original) else { continue }
+            if risk != .blocked, let protection = policy.protectionReason(for: path) {
+                risk = .blocked
+                reason = "함께 지울 파일이 보호 경로: \(protection)"
+            } else if risk != .blocked, !PathUtilities.isStrictDescendant(path, of: canonicalRoot) {
+                risk = .blocked
+                reason = "함께 지울 파일이 허용 위치 밖"
+            }
+            companions.append(PathTarget(url: URL(fileURLWithPath: path), identity: id,
+                                         allowedRoot: URL(fileURLWithPath: canonicalRoot),
+                                         toleratesContentChanges: false, scannedAt: scannedAt))
+        }
+
         let target = PathTarget(url: URL(fileURLWithPath: canonical), identity: identity,
                                 allowedRoot: URL(fileURLWithPath: canonicalRoot),
-                                toleratesContentChanges: spec.toleratesContentChanges, scannedAt: scannedAt)
+                                toleratesContentChanges: spec.toleratesContentChanges, scannedAt: scannedAt,
+                                companions: companions)
         return CleanupCandidate(
             id: spec.id ?? "path:" + canonical,
             title: spec.title,

@@ -2,7 +2,7 @@ import SwiftUI
 
 /// How the Smart Cleanup summary groups candidates.
 enum JunkGroup: String, CaseIterable, Identifiable {
-    case userCache, browserCache, xcode, developer, projects, tempWork, aiTools, logs, screenshots, downloads, mail, leftovers, other
+    case userCache, browserCache, xcode, developer, projects, emulators, tempWork, aiTools, logs, screenshots, downloads, mail, leftovers, other
 
     var id: String { rawValue }
 
@@ -14,6 +14,7 @@ enum JunkGroup: String, CaseIterable, Identifiable {
         case .developer: "개발 도구 캐시"
         case .projects: "프로젝트 빌드·생성물"
         case .tempWork: "임시 작업 폴더 (/tmp)"
+        case .emulators: "에뮬레이터·가상머신"
         case .aiTools: "AI 도구 캐시"
         case .logs: "로그 파일"
         case .screenshots: "스크린샷·화면 기록"
@@ -32,6 +33,7 @@ enum JunkGroup: String, CaseIterable, Identifiable {
         case .developer: "cube"
         case .projects: "folder.badge.gearshape"
         case .tempWork: "tray.full"
+        case .emulators: "desktopcomputer"
         case .aiTools: "sparkles"
         case .logs: "doc.text"
         case .screenshots: "camera.viewfinder"
@@ -51,7 +53,8 @@ enum JunkGroup: String, CaseIterable, Identifiable {
         switch c.category {
         case .appCache, .systemCache, .hiddenCache: .userCache
         case .browserCache: .browserCache
-        case .xcode, .simulator, .swiftPackages: .xcode
+        case .xcode, .swiftPackages: .xcode
+        case .simulator, .androidEmulator, .virtualMachine: .emulators
         case .node, .expo, .gradle, .android, .homebrew, .docker: .developer
         case .projectBuild, .projectDependencies: .projects
         case .sharedTemporary: .tempWork

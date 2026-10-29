@@ -50,6 +50,7 @@ struct SafetyPolicy: Sendable {
             p(".m2"), p(".cocoapods"), p(".cargo"), p(".pub-cache"), p(".bun"), p(".node-gyp"),
             p(".electron-gyp"), p(".nuget"), p(".composer"), p("Library/iTunes"), p("Desktop"),
             p(".claude"), p(".codex"), p(".ollama"), p(".lmstudio"), p("Library/Android/sdk/ndk"),
+            p("Library/Android/sdk/system-images"), p("Parallels"), p("VirtualBox VMs"),
             p("Library/Application Support/Cursor"), p("Library/Application Support/Claude"),
             p("Library/Application Support/Code"),
             // App uninstall locations
@@ -83,6 +84,9 @@ struct SafetyPolicy: Sendable {
             (p(".pub-cache"), "Dart/Flutter 폴더 자체"), (p(".bun"), "Bun 폴더 자체"), (p(".nuget"), "NuGet 폴더 자체"),
             (p(".composer"), "Composer 폴더 자체"), (p("Library/iTunes"), "iTunes 폴더 자체"),
             (p("Library/Android/sdk/ndk"), "Android NDK 폴더 자체"),
+            (p("Library/Android/sdk/system-images"), "Android 시스템 이미지 폴더 자체"),
+            (p(".android/avd"), "Android 에뮬레이터 폴더 자체"), (p("Parallels"), "Parallels 폴더 자체"),
+            (p("VirtualBox VMs"), "VirtualBox 폴더 자체"),
         ]
         let subtrees: [(String, String)] = [
             ("/System", "macOS 시스템"), ("/usr", "시스템 바이너리"), ("/bin", "시스템 바이너리"),
@@ -113,7 +117,7 @@ struct SafetyPolicy: Sendable {
             (p(".ollama/models"), "Ollama 모델 — ollama rm으로만 제거"),
             (p(".ollama/id_ed25519"), "Ollama 키"),
             (p(".expo/state.json"), "Expo 로그인 정보"), (p(".expo/codesigning"), "Expo 코드 서명"),
-            (p(".android/debug.keystore"), "Android 서명 키"), (p(".android/avd"), "Android 에뮬레이터 — 직접 관리"),
+            (p(".android/debug.keystore"), "Android 서명 키"),
             (p(".gradle/gradle.properties"), "Gradle 설정(자격 증명 포함 가능)"),
             (p(".cargo/bin"), "설치된 Rust 도구"), (p(".cargo/credentials.toml"), "Cargo 인증"), (p(".cargo/credentials"), "Cargo 인증"),
             (p(".m2/settings.xml"), "Maven 설정(자격 증명 포함 가능)"), (p(".bun/bin"), "설치된 Bun"),

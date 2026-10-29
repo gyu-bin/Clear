@@ -36,7 +36,16 @@ struct CleanupValidator: Sendable {
             }
             return .approved
         case .path(let target):
-            return validatePath(target)
+            let outcome = validatePath(target)
+            guard case .approved = outcome else { return outcome }
+            for companion in target.companions {
+                switch validatePath(companion) {
+                case .approved, .alreadyGone: continue
+                case .rejected(let reason):
+                    return .rejected("함께 지울 파일(\((companion.path as NSString).lastPathComponent)): \(reason)")
+                }
+            }
+            return outcome
         }
     }
 

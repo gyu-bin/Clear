@@ -61,6 +61,9 @@ struct PathTarget: Hashable, Sendable {
     /// as long as the inode is unchanged. Files and user data must be unchanged.
     let toleratesContentChanges: Bool
     let scannedAt: Date
+    /// Small files that belong to the item and go with it (an Android emulator's
+    /// `.ini` pointer next to its folder). Each is validated like the item itself.
+    var companions: [PathTarget] = []
 
     var path: String { url.path }
 }

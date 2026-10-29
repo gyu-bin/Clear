@@ -52,6 +52,8 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
     case screenshots
     case mailAttachments
     case startupItem
+    case androidEmulator
+    case virtualMachine
 
     var title: String {
         switch self {
@@ -90,6 +92,8 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
         case .screenshots: "스크린샷·화면 기록"
         case .mailAttachments: "메일 첨부파일"
         case .startupItem: "시작 항목"
+        case .androidEmulator: "Android 에뮬레이터"
+        case .virtualMachine: "가상머신"
         }
     }
 
@@ -130,6 +134,8 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
         case .screenshots: "camera.viewfinder"
         case .mailAttachments: "paperclip"
         case .startupItem: "power"
+        case .androidEmulator: "candybarphone"
+        case .virtualMachine: "desktopcomputer"
         }
     }
 
@@ -138,7 +144,8 @@ enum CleanupCategory: String, Codable, Sendable, CaseIterable {
         case .appCache, .systemCache, .logs, .temporary, .sharedTemporary, .savedState, .downloads, .trash,
              .orphanedAppData, .hiddenCache, .brokenLoginItem, .softwareUpdates, .largeFile,
              .browserCache, .screenshots, .mailAttachments, .startupItem: .general
-        case .xcode, .simulator, .swiftPackages, .node, .expo, .gradle, .android, .homebrew, .docker: .developer
+        case .xcode, .simulator, .swiftPackages, .node, .expo, .gradle, .android, .homebrew, .docker,
+             .androidEmulator, .virtualMachine: .developer
         case .projectBuild, .projectDependencies: .projects
         case .aiCache, .aiLogs, .aiModels: .aiTools
         case .appBundle, .appLeftover: .applications

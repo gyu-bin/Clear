@@ -169,7 +169,9 @@ struct XcodeAdapter: ToolAdapter {
                     id: "simctl:\(device.udid)", title: "\(device.name) (\(runtimeName))",
                     subtitle: "xcrun simctl delete \(device.udid)", category: .simulator, ruleID: "dev.xcode.simulator",
                     risk: booted ? .blocked : .manual,
-                    riskReason: booted ? "실행 중인 시뮬레이터" : "시뮬레이터 기기와 설치된 앱·데이터가 모두 삭제됩니다",
+                    riskReason: booted ? "실행 중인 시뮬레이터"
+                        : "시뮬레이터 기기와 설치된 앱·데이터가 모두 삭제됩니다"
+                          + (size.newestModification.map { " · 마지막 사용 \(GeneralCleanupScanner.idleText(ctx.scannedAt.timeIntervalSince($0)))" } ?? ""),
                     impact: "기기를 다시 만들어야 하며 기기 안의 앱 데이터는 복구할 수 없습니다.",
                     regenerable: false, size: size, lastModified: size.newestModification,
                     target: .command(TrustedCommand(tool: .xcrun, arguments: ["simctl", "delete", device.udid])),

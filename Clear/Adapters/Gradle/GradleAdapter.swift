@@ -112,14 +112,7 @@ struct GradleAdapter: ToolAdapter {
             }
         }
 
-        // Emulators: display only.
-        let avd = ctx.url(".android/avd")
-        for device in ctx.children(of: avd) ?? [] where device.pathExtension == "avd" {
-            if let loc = ctx.location(device, title: "에뮬레이터 \(device.deletingPathExtension().lastPathComponent)",
-                                      role: .simulator, protected: true, note: "Android Studio의 Device Manager에서 삭제하세요.") {
-                report.locations.append(loc)
-            }
-        }
+        scanEmulators(ctx, into: &report)
         if let loc = ctx.location(gradle.appendingPathComponent("jdks"), title: "Gradle JDK", role: .other, protected: true,
                                   note: "툴체인 JDK — 분석만 제공") {
             report.locations.append(loc)
@@ -128,6 +121,84 @@ struct GradleAdapter: ToolAdapter {
             c.path.map { ToolLocation(path: $0, title: c.title, role: .cache, size: c.size, isProtected: false, note: nil) }
         })
         return report
+    }
+
+    // MARK: Android emulators
+
+    /// Each emulator is `<name>.avd/` plus a `<name>.ini` pointer; both go together.
+    /// Quick-boot snapshots can go alone. System images no emulator uses are offered too.
+    private func scanEmulators(_ ctx: ScanContext, into report: inout ToolReport) {
+        let android = ctx.url(".android")
+        let avdDir = android.appendingPathComponent("avd")
+        var imagesInUse = Set<String>()
+        for device in ctx.children(of: avdDir) ?? [] where device.pathExtension == "avd" && ctx.isDirectory(device) {
+            let name = device.deletingPathExtension().lastPathComponent
+            let config = Self.iniValues(at: device.appendingPathComponent("config.ini"))
+            if let image = config["image.sysdir.1"] { imagesInUse.insert(Self.normalizedImage(image)) }
+            let display = config["avd.ini.displayname"] ?? name
+            // The emulator is started with `-avd <name>`.
+            let running = ProcessGuard.commandLine("-avd \(name)", "에뮬레이터 \(display)")
+            let spec = CandidateSpec(
+                id: "avd:\(device.path)", title: "Android 에뮬레이터 · \(display)", category: .androidEmulator,
+                ruleID: "dev.android.avd", risk: .manual,
+                riskReason: "에뮬레이터 기기와 그 안의 앱·데이터가 모두 삭제됩니다",
+                impact: "다시 쓰려면 Android Studio의 Device Manager에서 새로 만들어야 합니다.",
+                regenerable: false, guards: [running], preferredMethod: .permanent,
+                warning: "에뮬레이터 안의 앱 데이터는 복구할 수 없습니다.",
+                minimumSize: 50 * 1024 * 1024, companions: [avdDir.appendingPathComponent(name + ".ini")])
+            if var c = ctx.makeCandidate(at: device, root: android, spec: spec) {
+                if let last = c.size.newestModification {
+                    c.riskReason += " · 마지막 사용 \(GeneralCleanupScanner.idleText(ctx.scannedAt.timeIntervalSince(last)))"
+                }
+                report.candidates.append(c)
+            }
+            let snapshots = device.appendingPathComponent("snapshots")
+            let snapSpec = CandidateSpec(
+                id: "avd-snapshots:\(device.path)", title: "\(display) 빠른 부팅 스냅샷", category: .androidEmulator,
+                ruleID: "dev.android.avdSnapshots", risk: .review,
+                riskReason: "저장된 실행 상태 — 다음 실행은 처음부터 부팅(조금 느림)",
+                impact: "기기 안의 앱·데이터는 그대로입니다.", regenerable: true, guards: [running],
+                minimumSize: 100 * 1024 * 1024)
+            if let c = ctx.makeCandidate(at: snapshots, root: android, spec: snapSpec) { report.candidates.append(c) }
+        }
+
+        // System images: <sdk>/system-images/<api>/<tag>/<abi>
+        let images = ctx.url("Library/Android/sdk/system-images")
+        let anyEmulator = ProcessGuard.process("qemu-system-aarch64", "Android 에뮬레이터")
+        for api in ctx.children(of: images) ?? [] where ctx.isDirectory(api) {
+            for tag in ctx.children(of: api) ?? [] where ctx.isDirectory(tag) {
+                for abi in ctx.children(of: tag) ?? [] where ctx.isDirectory(abi) {
+                    let rel = "system-images/\(api.lastPathComponent)/\(tag.lastPathComponent)/\(abi.lastPathComponent)"
+                    guard !imagesInUse.contains(rel) else { continue }
+                    let spec = CandidateSpec(
+                        title: "시스템 이미지 \(api.lastPathComponent) · \(tag.lastPathComponent)", category: .androidEmulator,
+                        ruleID: "dev.android.systemImage", risk: .review,
+                        riskReason: "어느 에뮬레이터도 쓰지 않는 시스템 이미지",
+                        impact: "이 이미지로 에뮬레이터를 만들 때 SDK Manager가 다시 내려받습니다.",
+                        regenerable: true, guards: [anyEmulator] + DeveloperGuards.androidStudio,
+                        minimumSize: 50 * 1024 * 1024)
+                    if let c = ctx.makeCandidate(at: abi, root: images, spec: spec) { report.candidates.append(c) }
+                }
+            }
+        }
+    }
+
+    static func iniValues(at url: URL) -> [String: String] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
+        var values: [String: String] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            let parts = line.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            values[parts[0].trimmingCharacters(in: .whitespaces)] = parts[1].trimmingCharacters(in: .whitespaces)
+        }
+        return values
+    }
+
+    /// "system-images/android-37.1/google_apis/arm64-v8a/" → without the trailing slash.
+    static func normalizedImage(_ value: String) -> String {
+        var v = value.replacingOccurrences(of: "\\", with: "/")
+        while v.hasSuffix("/") { v.removeLast() }
+        return v
     }
 
     struct ProjectUsage: Equatable {

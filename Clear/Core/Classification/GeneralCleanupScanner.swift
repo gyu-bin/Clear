@@ -280,6 +280,7 @@ struct GeneralCleanupScanner: Sendable {
 
     static func idleText(_ seconds: TimeInterval) -> String {
         let hours = Int(seconds / 3600)
+        if hours < 1 { return "방금" }
         return hours < 24 ? "\(hours)시간 전" : "\(hours / 24)일 전"
     }
 

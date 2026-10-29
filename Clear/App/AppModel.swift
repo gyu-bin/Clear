@@ -487,7 +487,8 @@ final class AppModel {
     }
 
     static func developerAdapters(projects: [String] = []) -> [any ToolAdapter] {
-        [XcodeAdapter(), NodeAdapter(), ExpoAdapter(), GradleAdapter(projectFolders: projects), HomebrewAdapter(), DockerAdapter()]
+        [XcodeAdapter(), NodeAdapter(), ExpoAdapter(), GradleAdapter(projectFolders: projects), HomebrewAdapter(), DockerAdapter(),
+         VirtualMachineAdapter()]
     }
 
     @discardableResult

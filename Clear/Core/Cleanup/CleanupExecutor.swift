@@ -77,7 +77,7 @@ struct CleanupExecutor: Sendable {
             case .trash:
                 do {
                     let location = try fileSystem.moveToTrash(atPath: target.path)
-                    return result(item, .trashed, message: nil, trash: location)
+                    return result(item, .trashed, message: removeCompanions(of: target, trash: true), trash: location)
                 } catch {
                     return result(item, .failed, message: error.localizedDescription)
                 }
@@ -90,7 +90,7 @@ struct CleanupExecutor: Sendable {
                 }.value
                 switch outcome {
                 case .success(let stats):
-                    return result(item, .removed, message: nil, freed: stats.freedBytes)
+                    return result(item, .removed, message: removeCompanions(of: target, trash: false), freed: stats.freedBytes)
                 case .failure(let error as RemovalIncomplete):
                     return result(item, .failed, message: error.localizedDescription, freed: error.stats.freedBytes)
                 case .failure(FileSystemError.notFound):
@@ -100,6 +100,26 @@ struct CleanupExecutor: Sendable {
                 }
             }
         }
+    }
+
+    /// Removes the item's companion files after the item itself is gone.
+    /// Returns a note when one could not be removed.
+    private func removeCompanions(of target: PathTarget, trash: Bool) -> String? {
+        var failures: [String] = []
+        for companion in target.companions {
+            do {
+                if trash {
+                    _ = try fileSystem.moveToTrash(atPath: companion.path)
+                } else {
+                    _ = try fileSystem.removeTree(atPath: companion.path, expected: companion.identity, shouldCancel: { false })
+                }
+            } catch FileSystemError.notFound {
+                continue
+            } catch {
+                failures.append((companion.path as NSString).lastPathComponent)
+            }
+        }
+        return failures.isEmpty ? nil : "함께 지울 파일을 지우지 못함: \(failures.joined(separator: ", "))"
     }
 
     private func result(_ item: CleanupPlanItem, _ status: CleanupItemStatus, message: String?,
