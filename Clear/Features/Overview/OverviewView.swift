@@ -213,8 +213,10 @@ private struct SummaryTiles: View {
 
     private var historyTile: some View {
         let records = model.history.records
-        let total = records.reduce(Int64(0)) { $0 + $1.removedBytes + $1.trashedBytes }
-        return DashboardTile(title: "지금까지 정리한 용량", symbol: "checkmark.seal",
+        // Only space actually freed: moving to the Trash frees nothing until it is
+        // emptied, and counting both would count the same files twice.
+        let total = records.reduce(Int64(0)) { $0 + $1.removedBytes }
+        return DashboardTile(title: "지금까지 확보한 용량", symbol: "checkmark.seal",
                              value: total.formattedBytes,
                              detail: records.first.map { "\(records.count)회 · 최근 \($0.finishedAt.formatted(.relative(presentation: .named)))" }
                                  ?? "아직 정리 기록이 없습니다") {

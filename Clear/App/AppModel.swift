@@ -199,6 +199,7 @@ final class AppModel {
             // inside still give a usable lower bound.
             if let size, size.fileCount > 0 || size.inaccessibleCount == 0 {
                 trashBytes = size.allocated
+                setBreakdownSegment("trash", bytes: size.allocated)
                 if case .loaded(var report, let date) = general {
                     report.trashSize = size
                     general = .loaded(report, date)
@@ -389,19 +390,61 @@ final class AppModel {
                 storage = .failed(volumeError ?? "볼륨 정보를 읽지 못했습니다")
                 return
             }
+            let startedAt = Date()
             let categories = StorageBreakdownScanner.categories(home: PathUtilities.realHomeDirectory,
                                                                 personalFolders: settings.overviewFolders)
             let progress = progressHandler { [weak self] p in if self?.storage.isLoading == true { self?.storage = .loading(p) } }
             let result = await StorageBreakdownScanner().scan(categories: categories, volume: volume, progress: progress)
             if Task.isCancelled { storage = .idle; return }
-            storage = .loaded(result, Date())
-            settingsStore.lastBreakdown = StoredBreakdown(
-                date: Date(),
-                categories: result.segments.map { .init(id: $0.id, title: $0.title, bytes: $0.bytes) },
-                unattributed: result.unattributed)
+            storeBreakdown(result)
+            // The Trash may have been measured again (after a cleanup) while this scan ran.
+            if let measuredAt = trashMeasuredAt, measuredAt > startedAt, let trashBytes {
+                setBreakdownSegment("trash", bytes: trashBytes)
+            }
         }
         Task { await finish("storage", task) }
         return task
+    }
+
+    private func storeBreakdown(_ result: StorageBreakdown, date: Date = Date()) {
+        storage = .loaded(result, date)
+        settingsStore.lastBreakdown = StoredBreakdown(
+            date: date,
+            categories: result.segments.map { .init(id: $0.id, title: $0.title, bytes: $0.bytes) },
+            unattributed: result.unattributed)
+    }
+
+    private func setBreakdownSegment(_ id: String, bytes: Int64) {
+        guard case .loaded(let breakdown, _) = storage,
+              let current = breakdown.segments.first(where: { $0.id == id })?.bytes else { return }
+        adjustBreakdown([id: bytes - current])
+    }
+
+    /// Moves cleaned bytes out of the chart's categories (and into the Trash slice
+    /// when moved there), so the chart matches without measuring everything again.
+    private func adjustBreakdown(after report: CleanupReport) {
+        guard case .loaded(let breakdown, _) = storage else { return }
+        var deltas: [String: Int64] = [:]
+        for r in report.results where r.status.isSuccess {
+            if r.category == .trash { deltas["trash", default: 0] -= r.estimatedBytes; continue }
+            if let path = r.path, let segment = breakdown.segments.first(where: { s in
+                s.id != "trash" && s.paths.contains { PathUtilities.isSameOrDescendant(path, of: $0) }
+            }) {
+                deltas[segment.id, default: 0] -= r.estimatedBytes
+            }
+            if r.status == .trashed { deltas["trash", default: 0] += r.estimatedBytes }
+        }
+        adjustBreakdown(deltas)
+    }
+
+    private func adjustBreakdown(_ deltas: [String: Int64]) {
+        guard !deltas.isEmpty, case .loaded(let breakdown, let date) = storage else { return }
+        let segments = breakdown.segments.map { s -> StorageSegment in
+            guard let delta = deltas[s.id], let bytes = s.bytes else { return s }
+            return StorageSegment(id: s.id, title: s.title, symbol: s.symbol, paths: s.paths,
+                                  bytes: max(0, bytes + delta), isPartial: s.isPartial)
+        }.sorted { ($0.bytes ?? -1) > ($1.bytes ?? -1) }
+        storeBreakdown(StorageBreakdown(segments: segments, volume: volume ?? breakdown.volume), date: date)
     }
 
     @discardableResult
@@ -596,6 +639,8 @@ final class AppModel {
         aiSelection.subtract(done)
         projectSelection.subtract(done)
         junkSelection.subtract(done)
+        refreshVolume()   // before the chart update, so "시스템 및 기타" uses the new used space
+        adjustBreakdown(after: report)
         if report.results.contains(where: { $0.category == .trash }) || report.trashedBytes > 0 { refreshTrashSize(after: report) }
         applications.didFinishCleanup(done)
         duplicates.didFinishCleanup(done)
