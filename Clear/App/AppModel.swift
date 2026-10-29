@@ -40,6 +40,8 @@ final class AppModel {
     /// Size of `~/.Trash`; nil when unknown (no Full Disk Access).
     private(set) var trashBytes: Int64?
     private var trashMeasuredAt: Date?
+    /// Only the newest measurement may overwrite the value (an older, slower one could be stale).
+    private var trashMeasureGeneration = 0
 
     var generalSelection: Set<String> = []
     var developerSelection: Set<String> = []
@@ -187,24 +189,36 @@ final class AppModel {
     func refreshTrash(force: Bool = false) {
         if !force, let at = trashMeasuredAt, Date().timeIntervalSince(at) < 60 { return }
         trashMeasuredAt = Date()
+        trashMeasureGeneration += 1
+        let generation = trashMeasureGeneration
         Task { @MainActor in
             let path = PathUtilities.realHomeDirectory.appendingPathComponent(".Trash").path
-            let size = await runOffMain { () -> Int64? in
-                guard let s = try? DirectorySizer().measure(path: path), s.inaccessibleCount == 0 else { return nil }
-                return s.allocated
+            let size = await runOffMain { try? DirectorySizer().measure(path: path) }
+            guard generation == trashMeasureGeneration else { return }
+            // Unreadable Trash (no Full Disk Access) → unknown. A few unreadable items
+            // inside still give a usable lower bound.
+            if let size, size.fileCount > 0 || size.inaccessibleCount == 0 {
+                trashBytes = size.allocated
+                if case .loaded(var report, let date) = general {
+                    report.trashSize = size
+                    general = .loaded(report, date)
+                }
+            } else {
+                trashBytes = nil
             }
-            trashBytes = size
         }
     }
 
-    private func refreshTrashSize() {
-        refreshTrash(force: true)
-        guard case .loaded(var report, let date) = general else { return }
-        let trash = PathUtilities.realHomeDirectory.appendingPathComponent(".Trash").path
-        if let size = try? DirectorySizer().measure(path: trash), size.inaccessibleCount == 0 {
-            report.trashSize = size
-            general = .loaded(report, date)
+    /// Shows the expected Trash size right away, then measures it in the background
+    /// (a large Trash takes minutes to walk).
+    private func refreshTrashSize(after report: CleanupReport) {
+        let emptied = report.results.filter { $0.category == .trash && $0.status.isSuccess }.reduce(0) { $0 + $1.estimatedBytes }
+        if let current = trashBytes {
+            trashBytes = max(0, current + report.trashedBytes - emptied)
+        } else if emptied == 0, report.trashedBytes > 0 {
+            trashBytes = report.trashedBytes
         }
+        refreshTrash(force: true)
     }
 
     var settings: AppSettings { settingsStore.settings }
@@ -582,7 +596,7 @@ final class AppModel {
         aiSelection.subtract(done)
         projectSelection.subtract(done)
         junkSelection.subtract(done)
-        if report.results.contains(where: { $0.category == .trash }) || report.trashedBytes > 0 { refreshTrashSize() }
+        if report.results.contains(where: { $0.category == .trash }) || report.trashedBytes > 0 { refreshTrashSize(after: report) }
         applications.didFinishCleanup(done)
         duplicates.didFinishCleanup(done)
         largeFiles.didFinishCleanup(done)
