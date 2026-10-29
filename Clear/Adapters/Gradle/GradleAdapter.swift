@@ -9,6 +9,9 @@ struct GradleAdapter: ToolAdapter {
     let symbol = "building.columns.fill"
     let kind = ToolKind.developer
     var staleDistributionAge: TimeInterval = 90 * 24 * 3600
+    /// Projects to read Gradle and NDK versions from. Empty = unknown, and
+    /// installed versions are treated as in use.
+    var projectFolders: [String] = []
 
     func scan(_ ctx: ScanContext) async -> ToolReport {
         let gradle = ctx.url(".gradle")
@@ -30,8 +33,11 @@ struct GradleAdapter: ToolAdapter {
         // Wrapper distributions: keep the newest; older and unused ones are candidates.
         let dists = gradle.appendingPathComponent("wrapper/dists")
         let distributions = (ctx.children(of: dists) ?? []).filter { ctx.isDirectory($0) }
-        let versionsInUse = Set(distributions.compactMap { Self.version(fromDistribution: $0.lastPathComponent) })
-        let newest = versionsInUse.max(by: Self.compareVersions)
+        let installed = Set(distributions.compactMap { Self.version(fromDistribution: $0.lastPathComponent) })
+        let newest = installed.max(by: Self.compareVersions)
+        let usage = Self.projectUsage(projectFolders)
+        // Versions some project needs; without known projects, everything installed counts.
+        let versionsInUse = usage.gradle.isEmpty ? installed : usage.gradle
         for dist in distributions {
             let v = Self.version(fromDistribution: dist.lastPathComponent)
             let spec = CandidateSpec(title: dist.lastPathComponent, category: .gradle, ruleID: "dev.gradle.wrapper",
@@ -39,7 +45,10 @@ struct GradleAdapter: ToolAdapter {
                                      impact: "이 버전을 쓰는 프로젝트를 빌드할 때 다시 내려받습니다.",
                                      regenerable: true, guards: guards, minimumSize: 10 * 1024 * 1024)
             guard var c = ctx.makeCandidate(at: dist, root: gradle, spec: spec) else { continue }
-            if v == newest { c.risk = .review; c.riskReason = "가장 최신 Gradle 배포판 — 사용 중일 가능성이 높음" }
+            if !usage.gradle.isEmpty, let v {
+                c.riskReason = usage.gradle.contains(v) ? "프로젝트가 쓰는 Gradle 버전 — 지우면 다음 빌드 때 다시 내려받음"
+                    : "어느 프로젝트도 쓰지 않는 Gradle 버전"
+            } else if v == newest { c.risk = .review; c.riskReason = "가장 최신 Gradle 배포판 — 사용 중일 가능성이 높음" }
             else if let last = c.size.newestModification, ctx.scannedAt.timeIntervalSince(last) > staleDistributionAge {
                 c.riskReason = "90일 넘게 사용하지 않은 Gradle 배포판"
             }
@@ -51,7 +60,9 @@ struct GradleAdapter: ToolAdapter {
             let name = folder.lastPathComponent
             guard name.first?.isNumber == true, name.contains("."), !versionsInUse.contains(name) else { continue }
             let spec = CandidateSpec(title: "Gradle \(name) 전용 캐시", category: .gradle, ruleID: "dev.gradle.versionCache",
-                                     risk: .review, riskReason: "설치된 래퍼 배포판에 없는 Gradle 버전의 캐시",
+                                     risk: .review,
+                                     riskReason: usage.gradle.isEmpty ? "설치된 래퍼 배포판에 없는 Gradle 버전의 캐시"
+                                         : "어느 프로젝트도 쓰지 않는 Gradle 버전의 캐시",
                                      impact: "해당 버전으로 빌드할 때 다시 만들어집니다.", regenerable: true,
                                      guards: guards, minimumSize: 10 * 1024 * 1024)
             if let c = ctx.makeCandidate(at: folder, root: gradle, spec: spec) { report.candidates.append(c) }
@@ -87,6 +98,20 @@ struct GradleAdapter: ToolAdapter {
             }
         }
 
+        // NDK versions no project asks for (each is a few GB).
+        let ndkRoot = ctx.url("Library/Android/sdk/ndk")
+        if !usage.ndk.isEmpty {
+            for folder in ctx.children(of: ndkRoot) ?? [] where ctx.isDirectory(folder) {
+                let version = folder.lastPathComponent
+                guard version.first?.isNumber == true, !usage.ndk.contains(version) else { continue }
+                let spec = CandidateSpec(title: "Android NDK \(version)", category: .android, ruleID: "dev.android.ndk",
+                                         risk: .review, riskReason: "어느 프로젝트도 쓰지 않는 NDK 버전",
+                                         impact: "이 버전이 필요한 프로젝트를 빌드하면 Android Studio SDK Manager가 다시 설치합니다.",
+                                         regenerable: true, guards: guards, minimumSize: 10 * 1024 * 1024)
+                if let c = ctx.makeCandidate(at: folder, root: ndkRoot, spec: spec) { report.candidates.append(c) }
+            }
+        }
+
         // Emulators: display only.
         let avd = ctx.url(".android/avd")
         for device in ctx.children(of: avd) ?? [] where device.pathExtension == "avd" {
@@ -103,6 +128,57 @@ struct GradleAdapter: ToolAdapter {
             c.path.map { ToolLocation(path: $0, title: c.title, role: .cache, size: c.size, isProtected: false, note: nil) }
         })
         return report
+    }
+
+    struct ProjectUsage: Equatable {
+        var gradle: Set<String> = []
+        var ndk: Set<String> = []
+    }
+
+    /// Gradle versions from `gradle-wrapper.properties` and NDK versions from
+    /// `ndkVersion` in build files (React Native's default included), looked up a
+    /// few levels deep in each project.
+    static func projectUsage(_ projects: [String]) -> ProjectUsage {
+        var usage = ProjectUsage()
+        let fm = FileManager.default
+        let skipped: Set<String> = ["node_modules", "Pods", "build", ".git", ".gradle", "DerivedData", ".build"]
+        func scanFile(_ path: String) {
+            let name = (path as NSString).lastPathComponent
+            guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+            if name == "gradle-wrapper.properties" {
+                for line in text.split(separator: "\n") where line.contains("distributionUrl") {
+                    let file = line.split(separator: "/").last.map(String.init) ?? ""
+                    if let v = version(fromDistribution: file.replacingOccurrences(of: ".zip", with: "")) { usage.gradle.insert(v) }
+                }
+            } else {
+                for line in text.split(separator: "\n") where line.contains("ndkVersion") {
+                    if let v = line.split(whereSeparator: { "\"'= :".contains($0) }).last.map(String.init),
+                       v.first?.isNumber == true, v.contains(".") { usage.ndk.insert(v) }
+                }
+            }
+        }
+        func visit(_ dir: String, depth: Int) {
+            guard depth <= 4, let names = try? fm.contentsOfDirectory(atPath: dir) else { return }
+            for name in names {
+                let path = dir + "/" + name
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: path, isDirectory: &isDir) else { continue }
+                if isDir.boolValue {
+                    if !skipped.contains(name), !name.hasPrefix(".") || name == ".expo" { visit(path, depth: depth + 1) }
+                } else if name == "gradle-wrapper.properties" || name.hasSuffix(".gradle") || name.hasSuffix(".gradle.kts")
+                            || name == "libs.versions.toml" || name == "gradle.properties" {
+                    scanFile(path)
+                }
+            }
+        }
+        for project in projects {
+            visit(project, depth: 0)
+            // React Native sets the NDK in its own version catalog.
+            for rn in ["node_modules/react-native/gradle/libs.versions.toml", "mobile/node_modules/react-native/gradle/libs.versions.toml"] {
+                scanFile(project + "/" + rn)
+            }
+        }
+        return usage
     }
 
     /// "gradle-8.7-bin" → "8.7"

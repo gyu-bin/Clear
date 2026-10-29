@@ -486,8 +486,8 @@ final class AppModel {
         return task
     }
 
-    static func developerAdapters() -> [any ToolAdapter] {
-        [XcodeAdapter(), NodeAdapter(), ExpoAdapter(), GradleAdapter(), HomebrewAdapter(), DockerAdapter()]
+    static func developerAdapters(projects: [String] = []) -> [any ToolAdapter] {
+        [XcodeAdapter(), NodeAdapter(), ExpoAdapter(), GradleAdapter(projectFolders: projects), HomebrewAdapter(), DockerAdapter()]
     }
 
     @discardableResult
@@ -497,7 +497,10 @@ final class AppModel {
             let ctx = await makeContext(progress: progressHandler { [weak self] p in
                 if self?.developer.isLoading == true { self?.developer = .loading(p) }
             })
-            let reports = await Self.scanAdapters(Self.developerAdapters(), ctx: ctx)
+            // Which Gradle/NDK versions are still needed depends on the projects.
+            var projects = allProjectFolders.map(\.path)
+            if discoveredProjects.isEmpty { projects += await runOffMain { ProjectDiscovery.find() } }
+            let reports = await Self.scanAdapters(Self.developerAdapters(projects: projects), ctx: ctx)
             if Task.isCancelled { developer = .idle; return }
             junkSelection.subtract(developer.value?.flatMap(\.candidates).map(\.id) ?? [])
             developer = .loaded(reports, Date())

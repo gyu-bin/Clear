@@ -49,7 +49,7 @@ struct SafetyPolicy: Sendable {
             p("Library/pnpm/store"), p(".yarn/berry/cache"), p(".Trash"),
             p(".m2"), p(".cocoapods"), p(".cargo"), p(".pub-cache"), p(".bun"), p(".node-gyp"),
             p(".electron-gyp"), p(".nuget"), p(".composer"), p("Library/iTunes"), p("Desktop"),
-            p(".claude"), p(".codex"), p(".ollama"), p(".lmstudio"),
+            p(".claude"), p(".codex"), p(".ollama"), p(".lmstudio"), p("Library/Android/sdk/ndk"),
             p("Library/Application Support/Cursor"), p("Library/Application Support/Claude"),
             p("Library/Application Support/Code"),
             // App uninstall locations
@@ -82,6 +82,7 @@ struct SafetyPolicy: Sendable {
             (p(".m2"), "Maven 폴더 자체"), (p(".cocoapods"), "CocoaPods 폴더 자체"), (p(".cargo"), "Cargo 폴더 자체"),
             (p(".pub-cache"), "Dart/Flutter 폴더 자체"), (p(".bun"), "Bun 폴더 자체"), (p(".nuget"), "NuGet 폴더 자체"),
             (p(".composer"), "Composer 폴더 자체"), (p("Library/iTunes"), "iTunes 폴더 자체"),
+            (p("Library/Android/sdk/ndk"), "Android NDK 폴더 자체"),
         ]
         let subtrees: [(String, String)] = [
             ("/System", "macOS 시스템"), ("/usr", "시스템 바이너리"), ("/bin", "시스템 바이너리"),

@@ -55,6 +55,38 @@ struct DeveloperAdapterTests {
         #expect(GradleAdapter.version(fromDistribution: "gradle-8.10-rc-1-all") == "8.10-rc-1")
     }
 
+    @Test("Gradle versions and NDKs that no project uses are offered; used ones are kept")
+    func gradleProjectUsage() async throws {
+        let big = 11 * 1024 * 1024
+        try temp.file("home/.gradle/caches/9.3.1/x", size: big)
+        try temp.file("home/.gradle/caches/9.4.1/x", size: big)
+        try temp.file("home/.gradle/wrapper/dists/gradle-9.3.1-bin/abc/gradle.zip", size: big)
+        try temp.file("home/.gradle/wrapper/dists/gradle-9.4.1-bin/abc/gradle.zip", size: big)
+        try temp.file("home/Library/Android/sdk/ndk/27.0.12077973/x", size: big)
+        try temp.file("home/Library/Android/sdk/ndk/27.1.12297006/x", size: big)
+        let project = try temp.dir("home/Code/App")
+        try temp.file("home/Code/App/android/gradle/wrapper/gradle-wrapper.properties",
+                      data: Data("distributionUrl=https\\://services.gradle.org/distributions/gradle-9.4.1-bin.zip\n".utf8))
+        try temp.file("home/Code/App/node_modules/react-native/gradle/libs.versions.toml",
+                      data: Data("[versions]\nndkVersion = \"27.1.12297006\"\n".utf8))
+
+        let usage = GradleAdapter.projectUsage([project.path])
+        #expect(usage.gradle == ["9.4.1"])
+        #expect(usage.ndk == ["27.1.12297006"])
+
+        let report = await GradleAdapter(projectFolders: [project.path]).scan(env.context())
+        func item(_ suffix: String) -> CleanupCandidate? { report.candidates.first { $0.path?.hasSuffix(suffix) == true } }
+        #expect(item("/caches/9.3.1")?.risk == .review)
+        #expect(item("/caches/9.4.1") == nil)
+        #expect(item("/gradle-9.3.1-bin")?.riskReason == "어느 프로젝트도 쓰지 않는 Gradle 버전")
+        #expect(item("/ndk/27.0.12077973")?.risk == .review)
+        #expect(item("/ndk/27.1.12297006") == nil)
+
+        // Without known projects, nothing about NDKs is guessed.
+        let unknown = await GradleAdapter().scan(env.context())
+        #expect(!unknown.candidates.contains { $0.ruleID == "dev.android.ndk" })
+    }
+
     @Test("npm cache is SAFE and guarded by npm processes")
     func npm() async throws {
         try temp.file("home/.npm/_cacache/content-v2/sha512/x", size: 600_000)
