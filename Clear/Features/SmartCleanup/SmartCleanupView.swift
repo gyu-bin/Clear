@@ -80,6 +80,12 @@ private struct JunkSummary: View {
                                 Spacer()
                                 let safe = entry.items.filter { $0.risk == .safe }.count
                                 if safe > 0 { Text("안전 \(safe)").font(ClearFont.caption).foregroundStyle(ClearColor.success) }
+                                let held = model.junkCandidates.filter { $0.risk == .blocked && JunkGroup.of($0) == entry.group }
+                                if !held.isEmpty {
+                                    Text("보호 \(held.count) · \(held.reduce(0) { $0 + $1.estimatedBytes }.formattedBytes)")
+                                        .font(ClearFont.caption).foregroundStyle(ClearColor.textTertiary)
+                                        .help("사용 중이거나 지우면 안 되는 항목 — 합계에서 빠짐")
+                                }
                                 Text("\(entry.items.count)개").font(ClearFont.numericSmall).foregroundStyle(ClearColor.textTertiary)
                                 Text(entry.bytes.formattedBytes).font(ClearFont.numeric).frame(minWidth: 76, alignment: .trailing)
                                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(ClearColor.textTertiary)

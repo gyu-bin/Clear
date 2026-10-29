@@ -172,13 +172,22 @@ struct SharedTempTests {
         try temp.file("sharedtmp/worktree/.git/HEAD", size: 10, modified: old)
         try temp.file("sharedtmp/worktree/a.bin", size: big, modified: old)
         try temp.file("sharedtmp/fresh/a.bin", size: big)
+        let recent = Date().addingTimeInterval(-5 * 3600)
+        try temp.file("sharedtmp/yesterday/a.bin", size: big, modified: recent)
+        try temp.file("sharedtmp/emulator-home/avd/a.img", size: big, modified: old)
+        try temp.file("sharedtmp/shell-cwd/a.bin", size: big, modified: old)
         try temp.file("sharedtmp/small/a.bin", size: 1024, modified: old)
         try temp.file("sharedtmp/claude-501/p/s/a.bin", size: big, modified: old)
 
         var scanner = GeneralCleanupScanner()
         scanner.includeLeftovers = false
         scanner.sharedTempRoot = root
-        let report = try await scanner.scan(env.context(extraRoots: [root]), appNames: [:])
+        let canonicalRoot = PathUtilities.canonicalPath(root.path)!
+        var processes = ProcessSnapshot()
+        // An emulator started with the folder (spelled via /tmp-style path fragment) and a shell inside another.
+        processes.interpreterCommandLines = ["qemu-system-aarch64 -avd test -datadir \(canonicalRoot.lowercased())/emulator-home/avd"]
+        processes.workingDirectories = ["\(canonicalRoot.lowercased())/shell-cwd/sub"]
+        let report = try await scanner.scan(env.context(processes: processes, extraRoots: [root]), appNames: [:])
         let items = report.candidates.filter { $0.category == .sharedTemporary }
         let byName = Dictionary(uniqueKeysWithValues: items.map { (($0.path! as NSString).lastPathComponent, $0) })
 
@@ -191,6 +200,13 @@ struct SharedTempTests {
         #expect(!copy.allowsPermanentRemoval)
         #expect(byName["worktree"]?.risk == .manual)
         #expect(byName["fresh"]?.risk == .blocked)
+        // Written hours ago and not in use: offered, with when it was last used.
+        #expect(byName["yesterday"]?.risk == .review)
+        #expect(byName["yesterday"]?.riskReason.contains("5시간 전") == true)
+        #expect(byName["emulator-home"]?.risk == .blocked)
+        #expect(byName["emulator-home"]?.title == "Android 테스트 환경 · emulator-home")
+        #expect(byName["shell-cwd"]?.risk == .blocked)
+        #expect(byName["shell-cwd"]?.riskReason == "실행 중인 프로세스가 이 폴더를 쓰고 있음")
         #expect(byName["small"] == nil)
         #expect(byName["claude-501"] == nil)
         #expect(!items.contains { $0.isDefaultSelected })

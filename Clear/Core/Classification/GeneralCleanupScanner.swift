@@ -35,6 +35,8 @@ struct GeneralCleanupScanner: Sendable {
     var sharedTempRoot: URL?
     static let defaultSharedTempRoot = URL(fileURLWithPath: "/private/tmp")
     var sharedTempMinimum: Int64 = 50 * 1024 * 1024
+    /// Items written more recently than this are left alone even if no process uses them.
+    var sharedTempQuietPeriod: TimeInterval = 2 * 3600
 
     static let ownedLogFolders: Set<String> = ["Claude", "Cursor", "CoreSimulator", "JetBrains", "Google", "Homebrew"]
     static let installerExtensions: Set<String> = ["dmg", "pkg", "mpkg", "zip", "xip", "iso", "ipsw"]
@@ -248,24 +250,41 @@ struct GeneralCleanupScanner: Sendable {
             guard let id = try? ctx.fileSystem.identity(atPath: child.path), id.ownerUID == getuid(),
                   id.kind == .directory || id.kind == .file else { continue }
             let kind = TempKind.of(child.path, isDirectory: id.kind == .directory)
+            let canonicalChild = PathUtilities.canonicalPath(child.path) ?? child.path
             let spec = CandidateSpec(
                 id: "shared-tmp:\(child.path)", title: "\(kind.title) · \(name)",
                 category: .sharedTemporary, ruleID: "general.sharedTmp.\(kind.rawValue)",
                 risk: kind.risk, riskReason: kind.reason, impact: kind.impact,
-                regenerable: kind.regenerable, preferredMethod: kind.allowsPermanentRemoval ? .permanent : .trash,
+                regenerable: kind.regenerable, guards: [.pathInUse(canonicalChild)],
+                preferredMethod: kind.allowsPermanentRemoval ? .permanent : .trash,
                 allowsPermanentRemoval: kind.allowsPermanentRemoval, minimumSize: sharedTempMinimum)
             guard var c = ctx.makeCandidate(at: child, root: base, spec: spec) else { continue }
             let newest = c.size.newestModification ?? c.lastModified
-            if c.risk != .blocked, newest.map({ ctx.scannedAt.timeIntervalSince($0) < 86_400 }) ?? true {
-                c.risk = .blocked
-                c.riskReason = "최근 24시간 안에 쓰인 항목 — 작업 중일 수 있음"
+            let idle = newest.map { ctx.scannedAt.timeIntervalSince($0) }
+            if c.risk != .blocked {
+                // In use = a running process works in it or was started with it
+                // (emulator, Gradle daemon, xcodebuild, a shell or agent's current folder).
+                if !c.runningGuards.isEmpty {
+                    c.risk = .blocked
+                    c.riskReason = "실행 중인 프로세스가 이 폴더를 쓰고 있음"
+                } else if (idle ?? 0) < sharedTempQuietPeriod {
+                    c.risk = .blocked
+                    c.riskReason = "최근 2시간 안에 쓰인 항목 — 작업 중일 수 있음"
+                } else if let idle {
+                    c.riskReason += " · 마지막 사용 \(Self.idleText(idle))"
+                }
             }
             report.candidates.append(c)
         }
     }
 
+    static func idleText(_ seconds: TimeInterval) -> String {
+        let hours = Int(seconds / 3600)
+        return hours < 24 ? "\(hours)시간 전" : "\(hours / 24)일 전"
+    }
+
     enum TempKind: String {
-        case xcodeBuild, testResult, gitCopy, projectCopy, cache, other
+        case xcodeBuild, testResult, gitCopy, projectCopy, androidTest, cache, other
 
         static func of(_ path: String, isDirectory: Bool) -> TempKind {
             guard isDirectory else { return .other }
@@ -279,6 +298,8 @@ struct GeneralCleanupScanner: Sendable {
             if names.contains(where: { ProjectDiscovery.projectMarkers.contains($0) || ["xcodeproj", "xcworkspace"].contains(($0 as NSString).pathExtension) }) {
                 return .projectCopy
             }
+            // Per-task Android emulators and Gradle homes made for app testing.
+            if names.contains(where: { ["avd", "gradle-home", "android-build", "android-user"].contains($0) }) { return .androidTest }
             if name.lowercased().contains("cache") { return .cache }
             return .other
         }
@@ -289,6 +310,7 @@ struct GeneralCleanupScanner: Sendable {
             case .testResult: "Xcode 테스트 결과"
             case .gitCopy: "Git 저장소 사본"
             case .projectCopy: "프로젝트 사본"
+            case .androidTest: "Android 테스트 환경"
             case .cache: "캐시"
             case .other: "임시 항목"
             }
@@ -300,6 +322,7 @@ struct GeneralCleanupScanner: Sendable {
             case .testResult: "지난 테스트 실행 결과"
             case .gitCopy: "커밋하지 않았거나 올리지 않은 작업이 남아 있을 수 있음 — 직접 확인하세요"
             case .projectCopy: "실험·검증용으로 복사한 프로젝트로 보임 — 원본은 그대로 있음"
+            case .androidTest: "테스트용으로 따로 만든 에뮬레이터·Gradle 캐시 — QA 기록이 들어 있을 수 있음"
             case .cache: "도구가 임시로 쓴 캐시"
             case .other: "하루 넘게 쓰이지 않은 임시 항목"
             }

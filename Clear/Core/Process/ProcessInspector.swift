@@ -10,6 +10,8 @@ struct ProcessSnapshot: Sendable, Equatable {
     var bundleIdentifiers: Set<String> = []
     /// Argument vectors of interpreter processes (node, java, ruby, python), lowercased.
     var interpreterCommandLines: [String] = []
+    /// Current directories of the user's processes, lowercased.
+    var workingDirectories: [String] = []
     var takenAt = Date()
 
     static let empty = ProcessSnapshot()
@@ -25,9 +27,15 @@ struct ProcessSnapshot: Sendable, Equatable {
 
     func isRunning(_ g: ProcessGuard) -> Bool {
         switch g.kind {
-        case .bundleID: bundleIdentifiers.contains(g.value)
-        case .processName: executableNames.contains(g.value.lowercased())
-        case .commandLine: interpreterCommandLines.contains { $0.contains(g.value.lowercased()) }
+        case .bundleID: return bundleIdentifiers.contains(g.value)
+        case .processName: return executableNames.contains(g.value.lowercased())
+        case .commandLine: return interpreterCommandLines.contains { $0.contains(g.value.lowercased()) }
+        case .pathInUse:
+            // Arguments often spell /private/tmp as /tmp.
+            let path = g.value.lowercased()
+            let short = path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path
+            return interpreterCommandLines.contains { $0.contains(short) }
+                || workingDirectories.contains { PathUtilities.isSameOrDescendant($0, of: path) || PathUtilities.isSameOrDescendant($0, of: short) }
         }
     }
 }
@@ -39,7 +47,12 @@ protocol ProcessInspecting: Sendable {
 /// Reads the process table with libproc and `sysctl(KERN_PROCARGS2)`. Only the
 /// current user's processes expose their arguments, which is all we need.
 struct ProcessInspector: ProcessInspecting {
-    private static let interpreters: Set<String> = ["node", "java", "ruby", "python", "python3", "bun", "deno"]
+    /// Processes whose arguments are read: interpreters, and tools that are pointed at
+    /// a folder by argument (Android emulator, xcodebuild -derivedDataPath).
+    private static let interpreters: Set<String> = [
+        "node", "java", "ruby", "python", "python3", "bun", "deno",
+        "qemu-system-aarch64", "qemu-system-x86_64", "emulator", "xcodebuild", "gradle",
+    ]
 
     func snapshot() async -> ProcessSnapshot {
         var snap = Self.readProcessTable()
@@ -72,16 +85,30 @@ struct ProcessInspector: ProcessInspecting {
                 snap.executableNames.insert(last)
                 exeName = exeName ?? last
             }
-            if let exe = exeName, interpreters.contains(exe), let args = arguments(of: pid) {
+            // Arguments plus environment: tools are often pointed at a folder by a
+            // variable (ANDROID_AVD_HOME, GRADLE_USER_HOME) instead of an argument.
+            if let exe = exeName, interpreters.contains(exe), let args = arguments(of: pid, includingEnvironment: true) {
                 snap.interpreterCommandLines.append(args.joined(separator: " ").lowercased())
             }
+            if let cwd = workingDirectory(of: pid) { snap.workingDirectories.append(cwd.lowercased()) }
         }
         snap.takenAt = Date()
         return snap
     }
 
+    /// Current directory of a process. Only readable for the user's own processes.
+    static func workingDirectory(of pid: pid_t) -> String? {
+        var info = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
+        let path = withUnsafeBytes(of: info.pvi_cdir.vip_path) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        return path.isEmpty || path == "/" ? nil : path
+    }
+
     /// Argument vector via KERN_PROCARGS2. Returns nil for other users' processes.
-    static func arguments(of pid: pid_t) -> [String]? {
+    static func arguments(of pid: pid_t, includingEnvironment: Bool = false) -> [String]? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
@@ -96,7 +123,7 @@ struct ProcessInspector: ProcessInspecting {
 
         var args: [String] = []
         var start = index
-        while index < size, args.count < Int(argc) {
+        while index < size, includingEnvironment || args.count < Int(argc) {
             if buffer[index] == 0 {
                 if index > start, let s = String(bytes: buffer[start..<index], encoding: .utf8) { args.append(s) }
                 start = index + 1

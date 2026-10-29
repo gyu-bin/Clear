@@ -24,6 +24,8 @@ struct ProcessGuard: Hashable, Codable, Sendable {
         case processName
         /// Matches a substring of the argument vector of interpreter processes (node, java, ruby).
         case commandLine
+        /// A process works inside the folder (current directory) or names it in its arguments.
+        case pathInUse
     }
 
     let kind: Kind
@@ -40,6 +42,10 @@ struct ProcessGuard: Hashable, Codable, Sendable {
 
     static func commandLine(_ fragment: String, _ name: String) -> ProcessGuard {
         ProcessGuard(kind: .commandLine, value: fragment, displayName: name)
+    }
+
+    static func pathInUse(_ path: String, _ name: String = "이 폴더를 쓰는 프로세스") -> ProcessGuard {
+        ProcessGuard(kind: .pathInUse, value: path.lowercased(), displayName: name)
     }
 }
 
