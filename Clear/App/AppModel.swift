@@ -396,7 +396,10 @@ final class AppModel {
             let progress = progressHandler { [weak self] p in if self?.storage.isLoading == true { self?.storage = .loading(p) } }
             let result = await StorageBreakdownScanner().scan(categories: categories, volume: volume, progress: progress)
             if Task.isCancelled { storage = .idle; return }
-            storeBreakdown(result)
+            // Used space as of the end of the scan: files deleted while it ran must not
+            // show up as unexplained "시스템 및 기타".
+            refreshVolume()
+            storeBreakdown(StorageBreakdown(segments: result.segments, volume: volume ?? result.volume))
             // The Trash may have been measured again (after a cleanup) while this scan ran.
             if let measuredAt = trashMeasuredAt, measuredAt > startedAt, let trashBytes {
                 setBreakdownSegment("trash", bytes: trashBytes)

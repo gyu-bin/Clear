@@ -62,17 +62,20 @@ private struct StorageHero: View {
         guard let volume = model.volume else { return [] }
         let free = DonutSlice(id: "free", title: "사용 가능", bytes: volume.availableForImportantUsage, color: ClearColor.track)
         if let breakdown = model.storage.value {
-            return categorySlices(breakdown.segments.map { ($0.id, $0.title, $0.bytes) }, unattributed: breakdown.unattributed) + [free]
+            return categorySlices(breakdown.segments.map { ($0.id, $0.title, $0.bytes) }, used: volume.used) + [free]
         }
         if let stored = model.settingsStore.lastBreakdown {
-            return categorySlices(stored.categories.map { ($0.id, $0.title, $0.bytes) }, unattributed: stored.unattributed) + [free]
+            return categorySlices(stored.categories.map { ($0.id, $0.title, $0.bytes) }, used: volume.used) + [free]
         }
         return [DonutSlice(id: "used", title: "사용 중", bytes: volume.used, color: ClearColor.chart[0]), free]
     }
 
     /// Categories of at least 1 % of the disk get their own slice; the rest are
     /// folded into one "그 밖의 폴더" slice so the legend stays readable.
-    private func categorySlices(_ items: [(String, String, Int64?)], unattributed: Int64) -> [DonutSlice] {
+    /// "시스템 및 기타" is the current used space minus the measured folders, so
+    /// space freed after the analysis does not pile up there.
+    private func categorySlices(_ items: [(String, String, Int64?)], used: Int64) -> [DonutSlice] {
+        let unattributed = max(0, used - items.reduce(0) { $0 + ($1.2 ?? 0) })
         let total = Double(max(model.volume?.totalCapacity ?? 1, 1))
         var result: [DonutSlice] = []
         var small: Int64 = 0
