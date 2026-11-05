@@ -103,8 +103,10 @@ struct ProjectAnalyzer: Sendable {
         let total = (try? sizer.measure(path: path)) ?? .zero
         var dependencies: Int64 = 0, build: Int64 = 0, cache: Int64 = 0
         var candidates: [CleanupCandidate] = []
-        let guards: [ProcessGuard] = [.commandLine(path.lowercased(), "이 프로젝트의 개발 서버·빌드")]
-            + (kinds.contains("Xcode") || has("ios") ? DeveloperGuards.xcode : [])
+        // A build or dev server of this project names it in its arguments (xcodebuild
+        // -workspace, compilers, Gradle wrapper, Metro). Xcode merely being open, or a
+        // session sitting in the folder, does not block regenerable output.
+        let guards: [ProcessGuard] = [.commandLine(path.lowercased(), "이 프로젝트의 빌드·개발 서버")]
 
         for item in Self.known {
             try? Task.checkCancellation()
@@ -152,6 +154,12 @@ struct ProjectAnalyzer: Sendable {
         for c in await looseOutputs(root: root, path: path, isGit: isGit, covered: candidates.compactMap(\.path), guards: guards, ctx: ctx) {
             build += c.size.allocated
             candidates.append(c)
+        }
+        // When was the project last worked on? Dependencies of an idle project can go;
+        // every item says when it was last built or touched.
+        let activity = await Self.lastActivity(of: path, isGit: isGit, runner: ctx.commandRunner)
+        for i in candidates.indices {
+            Self.describeAge(&candidates[i], projectActivity: activity, now: ctx.scannedAt)
         }
         if !isGit { notes.append("Git 저장소가 아니므로 추적 여부를 확인할 수 없습니다. 생성 폴더만 후보로 표시합니다.") }
         if total.inaccessibleCount > 0 { notes.append("일부 폴더에 접근할 수 없어 크기가 실제보다 작게 표시될 수 있습니다.") }
@@ -231,6 +239,70 @@ struct ProjectAnalyzer: Sendable {
             out.append(c)
         }
         return out.sorted { $0.estimatedBytes > $1.estimatedBytes }
+    }
+
+    // MARK: Age
+
+    static let idleProjectAge: TimeInterval = 60 * 86_400
+
+    /// Build output: when it was last built (its newest file). Dependencies: when the
+    /// project was last worked on (npm stamps package files with a fixed 1985 date).
+    /// Dependencies of a project idle for 60 days need review instead of a manual pick.
+    static func describeAge(_ c: inout CleanupCandidate, projectActivity: Date?, now: Date) {
+        let isDependency = c.category == .projectDependencies
+        let reference = isDependency ? (projectActivity ?? c.lastModified) : (c.size.newestModification ?? c.lastModified)
+        guard let reference else { return }
+        c.lastModified = reference
+        guard c.risk != .blocked else { return }
+        let idle = now.timeIntervalSince(reference)
+        let text = GeneralCleanupScanner.idleText(idle)
+        if isDependency {
+            if idle >= idleProjectAge, c.risk == .manual {
+                c.risk = .review
+                c.riskReason = "\(text) 이후 손대지 않은 프로젝트의 의존성 — 필요할 때 다시 설치"
+            } else {
+                c.riskReason += " · 프로젝트 마지막 작업 \(text)"
+            }
+        } else {
+            c.riskReason += " · 마지막 빌드 \(text)"
+        }
+    }
+
+    /// Newest of: the last commit, and the files with uncommitted changes (Git); or
+    /// the newest source file a few levels down (no Git). Generated folders are ignored.
+    static func lastActivity(of path: String, isGit: Bool, runner: CommandRunning) async -> Date? {
+        var newest: Date?
+        func consider(_ date: Date?) { if let date { newest = max(newest ?? date, date) } }
+        func modified(_ file: String) -> Date? {
+            var st = stat()
+            guard lstat(file, &st) == 0 else { return nil }
+            return Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec))
+        }
+        if isGit {
+            if let log = try? await runner.run(.git, ["-C", path, "log", "-1", "--format=%ct"], timeout: 30), log.succeeded,
+               let seconds = TimeInterval(log.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                consider(Date(timeIntervalSince1970: seconds))
+            }
+            if let status = try? await runner.run(.git, ["-C", path, "status", "--porcelain", "-z", "--untracked-files=no"], timeout: 30),
+               status.succeeded {
+                for entry in status.stdout.split(separator: "\0").prefix(300) where entry.count > 3 {
+                    consider(modified(path + "/" + entry.dropFirst(3)))
+                }
+            }
+            if newest != nil { return newest }
+        }
+        let skipped = dependencyNames.union(buildNames).union(skippedComponents)
+        func visit(_ dir: String, depth: Int) {
+            guard depth <= 2, let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
+            for name in names where !name.hasPrefix(".") && !skipped.contains(name) && !name.hasSuffix(".noindex") {
+                let child = dir + "/" + name
+                var isDir: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: child, isDirectory: &isDir) else { continue }
+                if isDir.boolValue { visit(child, depth: depth + 1) } else { consider(modified(child)) }
+            }
+        }
+        visit(path, depth: 0)
+        return newest
     }
 
     // MARK: Build output found by content

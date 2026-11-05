@@ -164,7 +164,8 @@ struct GradleAdapter: ToolAdapter {
 
         // System images: <sdk>/system-images/<api>/<tag>/<abi>
         let images = ctx.url("Library/Android/sdk/system-images")
-        let anyEmulator = ProcessGuard.process("qemu-system-aarch64", "Android 에뮬레이터")
+        let anyEmulator = [ProcessGuard.process("qemu-system-aarch64", "Android 에뮬레이터"),
+                           .process("qemu-system-aarch64-headless", "Android 에뮬레이터")]
         for api in ctx.children(of: images) ?? [] where ctx.isDirectory(api) {
             for tag in ctx.children(of: api) ?? [] where ctx.isDirectory(tag) {
                 for abi in ctx.children(of: tag) ?? [] where ctx.isDirectory(abi) {
@@ -175,7 +176,7 @@ struct GradleAdapter: ToolAdapter {
                         ruleID: "dev.android.systemImage", risk: .review,
                         riskReason: "어느 에뮬레이터도 쓰지 않는 시스템 이미지",
                         impact: "이 이미지로 에뮬레이터를 만들 때 SDK Manager가 다시 내려받습니다.",
-                        regenerable: true, guards: [anyEmulator] + DeveloperGuards.androidStudio,
+                        regenerable: true, guards: anyEmulator + DeveloperGuards.androidStudio,
                         minimumSize: 50 * 1024 * 1024)
                     if let c = ctx.makeCandidate(at: abi, root: images, spec: spec) { report.candidates.append(c) }
                 }

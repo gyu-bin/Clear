@@ -29,7 +29,10 @@ struct JunkDetailView: View {
     @Binding var group: JunkGroup?
     @Environment(\.appModel) private var model
     @State private var search = ""
-    @State private var sortBySize = true
+    enum SortOrder: String, CaseIterable { case size = "크기순", oldest = "오래된 순", name = "이름순" }
+    @State private var sortOrder = SortOrder.size
+    /// "Not used for a while" = last used (built, touched, run) at least this long ago.
+    static let idleAge: TimeInterval = 30 * 86_400
     @State private var expanded: Set<String> = []
 
     var body: some View {
@@ -72,7 +75,13 @@ struct JunkDetailView: View {
                 if let current {
                     let items = (groups.first { $0.0 == current }?.1 ?? [])
                         .filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.subtitle.localizedCaseInsensitiveContains(search) }
-                        .sorted { sortBySize ? $0.estimatedBytes > $1.estimatedBytes : $0.title.localizedCompare($1.title) == .orderedAscending }
+                        .sorted { a, b in
+                            switch sortOrder {
+                            case .size: a.estimatedBytes > b.estimatedBytes
+                            case .name: a.title.localizedCompare(b.title) == .orderedAscending
+                            case .oldest: (a.lastModified ?? .distantFuture) < (b.lastModified ?? .distantFuture)
+                            }
+                        }
                     VStack(alignment: .leading, spacing: Space.xs) {
                         HStack(alignment: .firstTextBaseline) {
                             Text(current.title).font(ClearFont.pageTitle)
@@ -86,9 +95,19 @@ struct JunkDetailView: View {
                             .buttonStyle(.borderless).font(ClearFont.callout)
                             .disabled(shown.isEmpty)
                             .help(search.isEmpty ? "이 종류에서 선택할 수 있는 항목을 모두 선택합니다" : "검색된 항목만 선택합니다")
-                            Menu(sortBySize ? "크기순" : "이름순") {
-                                Button("크기순") { sortBySize = true }
-                                Button("이름순") { sortBySize = false }
+                            let idle = items.filter { c in
+                                c.risk.isSelectable && c.lastModified.map { Date().timeIntervalSince($0) >= Self.idleAge } == true
+                            }
+                            if !idle.isEmpty {
+                                Button("30일 넘게 안 쓴 것 선택 (\(idle.count)개 · \(idle.reduce(0) { $0 + $1.estimatedBytes }.formattedBytes))") {
+                                    model.junkSelection.formUnion(idle.map(\.id))
+                                    sortOrder = .oldest
+                                }
+                                .buttonStyle(.borderless).font(ClearFont.callout)
+                                .help("마지막으로 빌드·사용·수정한 지 30일이 넘은 항목을 선택합니다. 보호된 항목은 빠집니다.")
+                            }
+                            Menu(sortOrder.rawValue) {
+                                ForEach(SortOrder.allCases, id: \.self) { order in Button(order.rawValue) { sortOrder = order } }
                             }
                             .menuStyle(.borderlessButton).fixedSize()
                             SearchField(prompt: "검색", text: $search)
@@ -199,6 +218,14 @@ private struct ItemRow: View {
                     Text(candidate.subtitle).font(ClearFont.caption).foregroundStyle(ClearColor.textTertiary).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer()
+                if let last = candidate.lastModified {
+                    let idle = Date().timeIntervalSince(last)
+                    Text(GeneralCleanupScanner.idleText(idle))
+                        .font(ClearFont.caption)
+                        .foregroundStyle(idle >= JunkDetailView.idleAge ? ClearColor.textSecondary : ClearColor.textTertiary)
+                        .frame(minWidth: 52, alignment: .trailing)
+                        .help("마지막 사용(빌드·실행·수정) \(last.formatted(date: .abbreviated, time: .shortened))")
+                }
                 RiskBadge(risk: candidate.risk)
                 Text(candidate.estimatedBytes.formattedBytes).font(ClearFont.numeric).frame(minWidth: 72, alignment: .trailing)
                 Button {

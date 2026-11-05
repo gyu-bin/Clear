@@ -10,6 +10,10 @@ struct ProcessSnapshot: Sendable, Equatable {
     var bundleIdentifiers: Set<String> = []
     /// Argument vectors of interpreter processes (node, java, ruby, python), lowercased.
     var interpreterCommandLines: [String] = []
+    /// Environment of the same processes, lowercased. Only for "is this folder in
+    /// use" checks: helpers inherit their session's folders (CLAUDE_PROJECT_DIR)
+    /// without working there, so the environment never counts for project builds.
+    var environments: [String] = []
     /// Current directories of the user's processes, lowercased.
     var workingDirectories: [String] = []
     var takenAt = Date()
@@ -35,6 +39,7 @@ struct ProcessSnapshot: Sendable, Equatable {
             let path = g.value.lowercased()
             let short = path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path
             return interpreterCommandLines.contains { $0.contains(short) }
+                || environments.contains { $0.contains(short) }
                 || workingDirectories.contains { PathUtilities.isSameOrDescendant($0, of: path) || PathUtilities.isSameOrDescendant($0, of: short) }
         }
     }
@@ -51,7 +56,9 @@ struct ProcessInspector: ProcessInspecting {
     /// a folder by argument (Android emulator, xcodebuild -derivedDataPath).
     private static let interpreters: Set<String> = [
         "node", "java", "ruby", "python", "python3", "bun", "deno",
-        "qemu-system-aarch64", "qemu-system-x86_64", "emulator", "xcodebuild", "gradle",
+        "qemu-system-aarch64", "qemu-system-aarch64-headless", "qemu-system-x86_64", "emulator", "xcodebuild", "gradle",
+        // Compilers name the project's files while a build runs.
+        "swift-frontend", "clang", "ld",
     ]
 
     func snapshot() async -> ProcessSnapshot {
@@ -87,8 +94,10 @@ struct ProcessInspector: ProcessInspecting {
             }
             // Arguments plus environment: tools are often pointed at a folder by a
             // variable (ANDROID_AVD_HOME, GRADLE_USER_HOME) instead of an argument.
-            if let exe = exeName, interpreters.contains(exe), let args = arguments(of: pid, includingEnvironment: true) {
-                snap.interpreterCommandLines.append(args.joined(separator: " ").lowercased())
+            if let exe = exeName, interpreters.contains(exe), let all = arguments(of: pid, includingEnvironment: true) {
+                let argc = arguments(of: pid)?.count ?? all.count
+                snap.interpreterCommandLines.append(all.prefix(argc).joined(separator: " ").lowercased())
+                snap.environments.append(all.dropFirst(argc).joined(separator: " ").lowercased())
             }
             if let cwd = workingDirectory(of: pid) { snap.workingDirectories.append(cwd.lowercased()) }
         }

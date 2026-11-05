@@ -84,3 +84,43 @@ struct EmulatorTests {
         #expect(running.candidates.first { $0.ruleID == "vm.claude" }?.risk == .blocked)
     }
 }
+
+@Suite("Projects in use, and projects left alone")
+struct ProjectActivityTests {
+    @Test("A session's environment marks a /tmp folder in use, but never a project build")
+    func environmentOnlyForTemp() {
+        var snapshot = ProcessSnapshot()
+        snapshot.environments = ["claude_project_dir=/users/me/code/app pwd=/private/tmp/work"]
+        #expect(snapshot.runningGuards([.commandLine("/users/me/code/app", "빌드")]).isEmpty)
+        #expect(!snapshot.runningGuards([.pathInUse("/private/tmp/work")]).isEmpty)
+        snapshot.interpreterCommandLines = ["xcodebuild -workspace /users/me/code/app/ios/app.xcworkspace"]
+        #expect(!snapshot.runningGuards([.commandLine("/users/me/code/app", "빌드")]).isEmpty)
+    }
+
+    private func candidate(_ category: CleanupCategory, risk: RiskLevel, newest: Date?) -> CleanupCandidate {
+        var size = SizeInfo(logical: 1, allocated: 1, fileCount: 1)
+        size.newestModification = newest
+        return CleanupCandidate(id: UUID().uuidString, title: "x", subtitle: "", category: category, ruleID: "t",
+                                risk: risk, riskReason: "r", impact: "", regenerable: true, size: size, lastModified: newest,
+                                target: .command(TrustedCommand(tool: .git, arguments: [])), guards: [],
+                                preferredMethod: .permanent, allowsPermanentRemoval: true)
+    }
+
+    @Test("Dependencies of a project idle for 60 days need review; build output shows its last build")
+    func ages() {
+        let now = Date()
+        var deps = candidate(.projectDependencies, risk: .manual, newest: Date(timeIntervalSince1970: 499_000_000))
+        ProjectAnalyzer.describeAge(&deps, projectActivity: now.addingTimeInterval(-90 * 86_400), now: now)
+        #expect(deps.risk == .review)
+        #expect(deps.lastModified == now.addingTimeInterval(-90 * 86_400))
+
+        var active = candidate(.projectDependencies, risk: .manual, newest: nil)
+        ProjectAnalyzer.describeAge(&active, projectActivity: now.addingTimeInterval(-3 * 86_400), now: now)
+        #expect(active.risk == .manual)
+        #expect(active.riskReason.contains("프로젝트 마지막 작업 3일 전"))
+
+        var build = candidate(.projectBuild, risk: .review, newest: now.addingTimeInterval(-40 * 86_400))
+        ProjectAnalyzer.describeAge(&build, projectActivity: now, now: now)
+        #expect(build.riskReason.contains("마지막 빌드 40일 전"))
+    }
+}
