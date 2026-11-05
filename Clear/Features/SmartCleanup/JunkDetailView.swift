@@ -98,8 +98,10 @@ struct JunkDetailView: View {
                             .menuStyle(.borderlessButton).fixedSize()
                             SearchField(prompt: "검색", text: $search).frame(maxWidth: 200)
                         }
+                        // Two lines at most: a text that insists on its full height makes the
+                        // page taller than the window while SwiftUI probes narrow widths.
                         Text(current.explanation).font(ClearFont.callout).foregroundStyle(ClearColor.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(2)
                         HStack(spacing: Space.m) {
                             Button(allShown ? "전체 해제" : "전체 선택") {
                                 if allShown { model.junkSelection.subtract(shown) } else { model.junkSelection.formUnion(shown) }
