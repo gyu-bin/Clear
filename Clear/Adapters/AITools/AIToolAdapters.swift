@@ -93,6 +93,12 @@ enum AIToolAdapters {
                   category: .aiCache, risk: .safe, reason: "설치가 끝난 업데이트 다운로드", impact: "영향 없음."),
             .init(relativePath: "Library/Caches/cursor-compile-cache", title: "Cursor 컴파일 캐시",
                   category: .aiCache, risk: .safe, reason: "재생성 가능한 캐시", impact: "다시 만들어집니다."),
+            // Copies of the code taken before agent edits, so a chat can roll back.
+            .init(relativePath: "Library/Application Support/Cursor/snapshots", title: "Cursor 체크포인트 저장소",
+                  category: .aiCache, risk: .manual,
+                  reason: "에이전트가 코드를 고치기 전에 떠 둔 사본 — 지난 채팅의 '체크포인트로 되돌리기'만 안 됨",
+                  impact: "채팅 기록과 설정은 그대로입니다. 새 작업부터 다시 쌓입니다.",
+                  regenerable: false, minimumSize: 100 * 1024 * 1024),
         ],
         protectedItems: [
             .init(relativePath: "Library/Application Support/Cursor/User", title: "사용자 설정·채팅 기록", role: .history),
