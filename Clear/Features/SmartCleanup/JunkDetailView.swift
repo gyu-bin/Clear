@@ -82,37 +82,40 @@ struct JunkDetailView: View {
                             case .oldest: (a.lastModified ?? .distantFuture) < (b.lastModified ?? .distantFuture)
                             }
                         }
-                    VStack(alignment: .leading, spacing: Space.xs) {
+                    // Selection acts on what the list shows (search applied); blocked items are skipped.
+                    let shown = items.filter { $0.risk.isSelectable }.map(\.id)
+                    let allShown = !shown.isEmpty && shown.allSatisfy { model.junkSelection.contains($0) }
+                    let idle = items.filter { c in
+                        c.risk.isSelectable && c.lastModified.map { Date().timeIntervalSince($0) >= Self.idleAge } == true
+                    }
+                    VStack(alignment: .leading, spacing: Space.s) {
                         HStack(alignment: .firstTextBaseline) {
-                            Text(current.title).font(ClearFont.pageTitle)
-                            Spacer()
-                            // Selects what the list shows (search applied); blocked items are skipped.
-                            let shown = items.filter { $0.risk.isSelectable }.map(\.id)
-                            let allShown = !shown.isEmpty && shown.allSatisfy { model.junkSelection.contains($0) }
-                            Button(allShown ? "전체 해제" : "전체 선택") {
-                                if allShown { model.junkSelection.subtract(shown) } else { model.junkSelection.formUnion(shown) }
-                            }
-                            .buttonStyle(.borderless).font(ClearFont.callout)
-                            .disabled(shown.isEmpty)
-                            .help(search.isEmpty ? "이 종류에서 선택할 수 있는 항목을 모두 선택합니다" : "검색된 항목만 선택합니다")
-                            let idle = items.filter { c in
-                                c.risk.isSelectable && c.lastModified.map { Date().timeIntervalSince($0) >= Self.idleAge } == true
-                            }
-                            if !idle.isEmpty {
-                                Button("30일 넘게 안 쓴 것 선택 (\(idle.count)개 · \(idle.reduce(0) { $0 + $1.estimatedBytes }.formattedBytes))") {
-                                    model.junkSelection.formUnion(idle.map(\.id))
-                                    sortOrder = .oldest
-                                }
-                                .buttonStyle(.borderless).font(ClearFont.callout)
-                                .help("마지막으로 빌드·사용·수정한 지 30일이 넘은 항목을 선택합니다. 보호된 항목은 빠집니다.")
-                            }
+                            Text(current.title).font(ClearFont.pageTitle).lineLimit(1)
+                            Spacer(minLength: Space.m)
                             Menu(sortOrder.rawValue) {
                                 ForEach(SortOrder.allCases, id: \.self) { order in Button(order.rawValue) { sortOrder = order } }
                             }
                             .menuStyle(.borderlessButton).fixedSize()
-                            SearchField(prompt: "검색", text: $search)
+                            SearchField(prompt: "검색", text: $search).frame(maxWidth: 200)
                         }
                         Text(current.explanation).font(ClearFont.callout).foregroundStyle(ClearColor.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: Space.m) {
+                            Button(allShown ? "전체 해제" : "전체 선택") {
+                                if allShown { model.junkSelection.subtract(shown) } else { model.junkSelection.formUnion(shown) }
+                            }
+                            .disabled(shown.isEmpty)
+                            .help(search.isEmpty ? "이 종류에서 선택할 수 있는 항목을 모두 선택합니다" : "검색된 항목만 선택합니다")
+                            if !idle.isEmpty {
+                                Button("30일 넘게 안 쓴 것 선택 · \(idle.count)개 \(idle.reduce(0) { $0 + $1.estimatedBytes }.formattedBytes)") {
+                                    model.junkSelection.formUnion(idle.map(\.id))
+                                    sortOrder = .oldest
+                                }
+                                .help("마지막으로 빌드·사용·수정한 지 30일이 넘은 항목을 선택합니다. 보호된 항목은 빠집니다.")
+                            }
+                            Spacer()
+                        }
+                        .buttonStyle(.borderless).font(ClearFont.callout).lineLimit(1)
                     }
                     .padding(.horizontal, Space.xl).padding(.vertical, Space.m)
                     Divider()
