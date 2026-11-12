@@ -50,6 +50,13 @@ rm -rf dist && mkdir -p dist
 ditto "$app" dist/Clear.app
 ditto -c -k --keepParent dist/Clear.app dist/Clear.zip
 codesign --verify --deep --strict dist/Clear.app && echo "signature ok"
+# Install before the DMG step: a DMG or notarization failure must not keep the
+# freshly built app from being installed.
+if [[ "${1:-}" == "--install" ]]; then
+  rm -rf /Applications/Clear.app
+  ditto dist/Clear.app /Applications/Clear.app
+  echo "installed to /Applications/Clear.app"
+fi
 
 # DMG: the app plus an Applications shortcut, so it installs by dragging.
 version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" dist/Clear.app/Contents/Info.plist)
@@ -79,9 +86,4 @@ if $developer_id; then
   fi
 fi
 echo "dist/Clear.dmg"
-if [[ "${1:-}" == "--install" ]]; then
-  rm -rf /Applications/Clear.app
-  ditto dist/Clear.app /Applications/Clear.app
-  echo "installed to /Applications/Clear.app"
-fi
 echo "dist/Clear.app, dist/Clear.zip"
