@@ -211,6 +211,7 @@ private struct SummaryTiles: View {
     var body: some View {
         HStack(alignment: .top, spacing: Space.l) {
             safeTile
+            agentTile
             trashTile
             historyTile
         }
@@ -230,6 +231,24 @@ private struct SummaryTiles: View {
             } else {
                 Button("Mac 스캔") { model.scanMac() }.primaryButton().disabled(model.isScanningMac)
             }
+        }
+    }
+
+    /// Build folders, project copies and session folders AI agents left behind.
+    private var agentTile: some View {
+        let all = model.agentLeftovers
+        let ready = all.filter { $0.risk.isSelectable }
+        let busy = all.filter { $0.risk == .blocked }
+        let scanned = model.general.value != nil
+        return DashboardTile(title: "AI 작업 폴더", symbol: "tray.full",
+                             value: scanned ? ready.reduce(0) { $0 + $1.estimatedBytes }.formattedBytes : "—",
+                             detail: !scanned ? "Mac 스캔 후 표시됩니다"
+                                 : busy.isEmpty ? "끝난 작업이 남긴 빌드·사본 \(ready.count)개"
+                                 : "\(ready.count)개 정리 가능 · 사용 중 \(busy.count)개(\(busy.reduce(0) { $0 + $1.estimatedBytes }.formattedBytes))는 제외") {
+            Button("정리…") { model.reviewAgentLeftovers() }
+                .secondaryButton()
+                .disabled(!scanned || ready.isEmpty || model.cleanup.isRunning)
+                .help("쓰는 중이거나 최근에 쓰인 폴더는 빼고, 확인 후 정리합니다")
         }
     }
 

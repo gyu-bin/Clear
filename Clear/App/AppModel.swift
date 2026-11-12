@@ -183,6 +183,21 @@ final class AppModel {
         }
     }
 
+    /// What AI agents and build scripts left behind, from the last everyday scan.
+    var agentLeftovers: [CleanupCandidate] { (general.value?.candidates ?? []).filter(\.isAgentLeftover) }
+
+    /// One click for all of it: every leftover that is not in use or freshly written,
+    /// through the usual confirmation.
+    func reviewAgentLeftovers() {
+        guard !cleanup.isRunning else { return }
+        let items = agentLeftovers.filter { $0.risk.isSelectable }
+        guard !items.isEmpty else {
+            cleanup.showMessage("지금 정리할 수 있는 AI 작업 폴더가 없습니다. 쓰는 중이거나 최근에 쓰인 폴더는 빠집니다.")
+            return
+        }
+        cleanup.review(title: "AI 작업 폴더 정리", candidates: items)
+    }
+
     func emptyTrash() {
         guard !cleanup.isRunning else { return }
         Task { @MainActor in

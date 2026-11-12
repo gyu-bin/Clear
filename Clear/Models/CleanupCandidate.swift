@@ -116,6 +116,11 @@ struct CleanupCandidate: Identifiable, Hashable, Sendable {
 
     var estimatedBytes: Int64 { size.estimatedReclaimable }
     var isDefaultSelected: Bool { risk == .safe && runningGuards.isEmpty }
+    /// Work folders AI agents and build scripts leave behind: /tmp items, Claude
+    /// Code session folders, Aside session work copies.
+    var isAgentLeftover: Bool {
+        category == .sharedTemporary || ruleID == "general.agentScratch" || ruleID == "general.asideWork"
+    }
     var domain: CleanupDomain { category.domain }
 
     var path: String? { target.pathTarget?.path }

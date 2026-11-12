@@ -57,6 +57,7 @@ final class BackgroundMonitor {
         await model.largeFiles.scan()?.value
 
         let junk = (model.general.value?.candidates ?? []).filter { $0.risk != .blocked && $0.category != .downloads }
+        let agentBytes = junk.filter(\.isAgentLeftover).reduce(0) { $0 + $1.estimatedBytes }
         let installers = (model.general.value?.candidates ?? []).filter { $0.category == .downloads }
         let cutoff = Date().addingTimeInterval(-182 * 86_400)
         let oldLarge = (model.largeFiles.state.value?.items ?? []).filter { $0.allocatedSize >= 500 * 1024 * 1024 && $0.lastUsed < cutoff }
@@ -68,7 +69,8 @@ final class BackgroundMonitor {
         guard total >= Int64(model.settings.reminderThresholdGB) * 1_000_000_000 else { return }
 
         var parts: [String] = []
-        if junkBytes > 0 { parts.append("캐시·찌꺼기 \(junkBytes.formattedBytes)") }
+        if agentBytes > 0 { parts.append("AI 작업 폴더 \(agentBytes.formattedBytes)") }
+        if junkBytes - agentBytes > 0 { parts.append("캐시·찌꺼기 \((junkBytes - agentBytes).formattedBytes)") }
         if !installers.isEmpty { parts.append("다운로드의 큰 파일 \(installers.count)개") }
         if !oldLarge.isEmpty { parts.append("6개월 넘게 안 연 큰 파일 \(oldLarge.count)개(\(largeBytes.formattedBytes))") }
         let target: SidebarItem = largeBytes > junkBytes + installerBytes ? .largeFiles : .smartCleanup

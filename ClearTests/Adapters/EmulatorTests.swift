@@ -152,3 +152,31 @@ struct ManualSelectionTests {
         #expect(ManualSelection.candidate(path: folder.path, ctx: env.context(processes: processes))?.risk == .blocked)
     }
 }
+
+@Suite("AI agent leftovers in one place")
+struct AgentLeftoverTests {
+    @Test("/tmp items, Claude Code session folders and Aside work copies count; ordinary caches do not")
+    func classification() async throws {
+        let temp = try TempDirectory()
+        let env = try FakeEnvironment(temp)
+        let tmp = try temp.dir("sharedtmp")
+        let scratch = try temp.dir("claude-501")
+        let aside = try temp.dir("home/.aside")
+        let old = Date().addingTimeInterval(-3 * 86_400)
+        try temp.file("sharedtmp/app-ios-build/info.plist", size: 10, modified: old)
+        try temp.file("sharedtmp/app-ios-build/Build/Products/a.bin", size: 60 * 1024 * 1024, modified: old)
+        try temp.file("claude-501/-Users-x-App/s1/scratchpad/a.bin", size: 11 * 1024 * 1024, modified: old)
+        try temp.file("home/.aside/u/0/sessions/2026-11-01_a/tmp/out.bin", size: 60 * 1024 * 1024, modified: old)
+        try temp.file("home/Library/Caches/com.example.app/cache.db", size: 2 * 1024 * 1024, modified: old)
+
+        var scanner = GeneralCleanupScanner()
+        scanner.includeLeftovers = false
+        scanner.sharedTempRoot = tmp
+        scanner.agentScratchRoot = scratch
+        scanner.asideRoot = aside
+        let report = try await scanner.scan(env.context(extraRoots: [tmp, scratch]), appNames: [:])
+        let leftovers = report.candidates.filter(\.isAgentLeftover)
+        #expect(Set(leftovers.map(\.ruleID)) == ["general.sharedTmp.xcodeBuild", "general.agentScratch", "general.asideWork"])
+        #expect(report.candidates.contains { !$0.isAgentLeftover })
+    }
+}
