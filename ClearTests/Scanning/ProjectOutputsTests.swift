@@ -216,3 +216,35 @@ struct SharedTempTests {
         #expect(!without.candidates.contains { $0.category == .sharedTemporary })
     }
 }
+
+@Suite("Aside session work folders")
+struct AsideWorkTests {
+    @Test("Finished sessions' tmp folders are offered (manual when they hold Git), recent ones blocked, the rest stays")
+    func asideWork() async throws {
+        let temp = try TempDirectory()
+        let env = try FakeEnvironment(temp)
+        let root = try temp.dir("home/.aside")
+        let old = Date().addingTimeInterval(-3 * 86_400)
+        let big = 60 * 1024 * 1024
+        try temp.file("home/.aside/u/0/sessions/2026-11-01_a/tmp/work/.git/HEAD", size: 10, modified: old)
+        try temp.file("home/.aside/u/0/sessions/2026-11-01_a/tmp/work/build.bin", size: big, modified: old)
+        try temp.file("home/.aside/u/0/sessions/2026-11-01_a/messages.jsonl", size: big, modified: old)
+        try temp.file("home/.aside/u/0/sessions/2026-11-02_b/tmp/out.bin", size: big, modified: old)
+        try temp.file("home/.aside/u/0/sessions/2026-11-03_c/tmp/out.bin", size: big)
+
+        var scanner = GeneralCleanupScanner()
+        scanner.includeLeftovers = false
+        scanner.asideRoot = root
+        let report = try await scanner.scan(env.context(), appNames: [:])
+        let items = report.candidates.filter { $0.ruleID == "general.asideWork" }
+        func item(_ session: String) -> CleanupCandidate? { items.first { $0.path?.contains("/\(session)/tmp") == true } }
+
+        let withGit = try #require(item("2026-11-01_a"))
+        #expect(withGit.risk == .manual)
+        #expect(!withGit.allowsPermanentRemoval)
+        #expect(withGit.title == "Aside 작업 폴더 · 2026-11-01")
+        #expect(item("2026-11-02_b")?.risk == .review)
+        #expect(item("2026-11-03_c")?.risk == .blocked)
+        #expect(!report.candidates.contains { $0.path?.hasSuffix("messages.jsonl") == true })
+    }
+}

@@ -461,7 +461,10 @@ final class AppModel {
                 let names = await runOffMain { AppCatalog.nameIndex() }
                 var scanner = GeneralCleanupScanner()
                 scanner.includeContainers = hasFullDiskAccess
-                if settings.aiToolsEnabled { scanner.agentScratchRoot = GeneralCleanupScanner.defaultAgentScratchRoot }
+                if settings.aiToolsEnabled {
+                    scanner.agentScratchRoot = GeneralCleanupScanner.defaultAgentScratchRoot
+                    scanner.asideRoot = GeneralCleanupScanner.defaultAsideRoot
+                }
                 scanner.sharedTempRoot = GeneralCleanupScanner.defaultSharedTempRoot
                 var report = try await scanner.scan(ctx, appNames: names)
                 // LaunchServices knows apps outside /Applications too (e.g. in ~/Downloads or

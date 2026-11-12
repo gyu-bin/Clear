@@ -50,7 +50,7 @@ struct SafetyPolicy: Sendable {
             p(".m2"), p(".cocoapods"), p(".cargo"), p(".pub-cache"), p(".bun"), p(".node-gyp"),
             p(".electron-gyp"), p(".nuget"), p(".composer"), p("Library/iTunes"), p("Desktop"),
             p(".claude"), p(".codex"), p(".ollama"), p(".lmstudio"), p("Library/Android/sdk/ndk"),
-            p("Library/Android/sdk/system-images"), p("Parallels"), p("VirtualBox VMs"),
+            p("Library/Android/sdk/system-images"), p("Parallels"), p("VirtualBox VMs"), p(".aside"),
             p("Library/Application Support/Cursor"), p("Library/Application Support/Claude"),
             p("Library/Application Support/Code"),
             // App uninstall locations
@@ -86,7 +86,7 @@ struct SafetyPolicy: Sendable {
             (p("Library/Android/sdk/ndk"), "Android NDK 폴더 자체"),
             (p("Library/Android/sdk/system-images"), "Android 시스템 이미지 폴더 자체"),
             (p(".android/avd"), "Android 에뮬레이터 폴더 자체"), (p("Parallels"), "Parallels 폴더 자체"),
-            (p("VirtualBox VMs"), "VirtualBox 폴더 자체"),
+            (p("VirtualBox VMs"), "VirtualBox 폴더 자체"), (p(".aside"), "Aside 데이터 폴더"),
         ]
         let subtrees: [(String, String)] = [
             ("/System", "macOS 시스템"), ("/usr", "시스템 바이너리"), ("/bin", "시스템 바이너리"),
@@ -149,6 +149,7 @@ struct SafetyPolicy: Sendable {
             (p(".claude"), [".jsonl", ".json", ".md", ".sqlite"], "Claude Code 기록·설정"),
             (p(".gemini"), [".json", ".jsonl", ".md", ".toml"], "Gemini CLI 기록·설정"),
             (p(".cursor"), [".json", ".jsonl", ".sqlite", ".vscdb"], "Cursor 데이터"),
+            (p(".aside"), [".json", ".jsonl", ".db", ".db-wal", ".db-shm", ".md"], "Aside 기록·설정"),
         ]
         protectedComponentSuffixes = [
             ".photoslibrary": "사진 보관함", ".backupdb": "Time Machine 백업", ".previousSystem": "이전 시스템",

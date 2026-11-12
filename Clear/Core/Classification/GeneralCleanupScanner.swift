@@ -29,6 +29,9 @@ struct GeneralCleanupScanner: Sendable {
     var agentScratchRoot: URL?
 
     static var defaultAgentScratchRoot: URL { URL(fileURLWithPath: "/private/tmp/claude-\(getuid())") }
+    /// Aside browser agents keep a work folder per session (`~/.aside/u/<n>/sessions/<id>/tmp`).
+    var asideRoot: URL?
+    static var defaultAsideRoot: URL { PathUtilities.realHomeDirectory.appendingPathComponent(".aside") }
     /// The shared temp folder, where build scripts and AI agents leave Xcode build
     /// folders and project copies. macOS only empties it at restart.
     /// Must also be an allowed root of the policy.
@@ -69,6 +72,10 @@ struct GeneralCleanupScanner: Sendable {
             try Task.checkCancellation()
             ctx.progress(ScanProgress(phase: "AI 에이전트 작업 폴더 분석 중"))
             scanAgentScratch(ctx, root: agentScratchRoot, into: &report)
+        }
+        if let asideRoot {
+            try Task.checkCancellation()
+            scanAsideSessions(ctx, root: asideRoot, into: &report)
         }
         if let sharedTempRoot {
             try Task.checkCancellation()
@@ -334,6 +341,47 @@ struct GeneralCleanupScanner: Sendable {
         }
         var regenerable: Bool { self == .xcodeBuild || self == .cache }
         var allowsPermanentRemoval: Bool { self == .xcodeBuild || self == .cache || self == .testResult }
+    }
+
+    /// Work folders of finished Aside sessions. Only `tmp` is offered; the
+    /// conversation (messages.jsonl) and results (artifacts) beside it stay.
+    private func scanAsideSessions(_ ctx: ScanContext, root: URL, into report: inout GeneralScanReport) {
+        guard let canonical = PathUtilities.canonicalPath(root.path), ctx.policy.isAllowedRoot(canonical) else { return }
+        let base = URL(fileURLWithPath: canonical)
+        for user in ctx.children(of: base.appendingPathComponent("u")) ?? [] where ctx.isDirectory(user) {
+            for session in ctx.children(of: user.appendingPathComponent("sessions")) ?? [] where ctx.isDirectory(session) {
+                let work = session.appendingPathComponent("tmp")
+                guard ctx.isDirectory(work) else { continue }
+                // A cloned project may hold commits that were never pushed.
+                let containsGit = (ctx.children(of: work) ?? []).contains {
+                    FileManager.default.fileExists(atPath: $0.path + "/.git")
+                } || FileManager.default.fileExists(atPath: work.path + "/.git")
+                let canonicalWork = PathUtilities.canonicalPath(work.path) ?? work.path
+                let spec = CandidateSpec(
+                    id: "aside-work:\(work.path)", title: "Aside 작업 폴더 · \(session.lastPathComponent.prefix(10))",
+                    category: .aiCache, ruleID: "general.asideWork",
+                    risk: containsGit ? .manual : .review,
+                    riskReason: containsGit ? "에이전트가 복사해 둔 프로젝트(Git 포함) — 올리지 않은 작업이 있을 수 있음"
+                        : "끝난 Aside 세션이 남긴 작업 파일",
+                    impact: "세션의 작업 사본과 빌드가 사라집니다. 대화 기록과 결과물(artifacts)은 그대로입니다.",
+                    regenerable: false, guards: [.pathInUse(canonicalWork)], preferredMethod: .trash,
+                    allowsPermanentRemoval: !containsGit, minimumSize: 50 * 1024 * 1024)
+                guard var c = ctx.makeCandidate(at: work, root: base, spec: spec) else { continue }
+                let idle = (c.size.newestModification ?? c.lastModified).map { ctx.scannedAt.timeIntervalSince($0) }
+                if c.risk != .blocked {
+                    if !c.runningGuards.isEmpty {
+                        c.risk = .blocked
+                        c.riskReason = "실행 중인 프로세스가 이 폴더를 쓰고 있음"
+                    } else if (idle ?? 0) < 86_400 {
+                        c.risk = .blocked
+                        c.riskReason = "최근 24시간 안에 쓰인 폴더 — 진행 중인 세션일 수 있음"
+                    } else if let idle {
+                        c.riskReason += " · 마지막 사용 \(Self.idleText(idle))"
+                    }
+                }
+                report.candidates.append(c)
+            }
+        }
     }
 
     /// Claude Code names the folder after the project path with every character
