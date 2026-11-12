@@ -72,10 +72,10 @@ private struct StorageHero: View {
 
     /// A legend entry opens its folder in Disk Explorer, where items can be looked
     /// into and moved to the Trash. Categories with several folders offer a menu.
-    @ViewBuilder private func legendTitle(_ s: DonutSlice) -> some View {
+    @ViewBuilder private func legendTitle(_ s: DonutSlice, highlighted: Bool) -> some View {
         let paths = explorablePaths(s.id)
         let label = Text(s.title).font(ClearFont.callout)
-            .foregroundStyle(selected?.id == s.id ? ClearColor.textPrimary : ClearColor.textSecondary)
+            .foregroundStyle(highlighted ? ClearColor.textPrimary : ClearColor.textSecondary)
         if paths.count == 1 {
             Button { explore(paths[0]) } label: { label }
                 .buttonStyle(.plain)
@@ -183,7 +183,7 @@ private struct StorageHero: View {
                         ForEach(slices.filter { $0.id != "free" }) { s in
                             GridRow {
                                 RoundedRectangle(cornerRadius: 2).fill(s.color).frame(width: 9, height: 9)
-                                legendTitle(s)
+                                legendTitle(s, highlighted: selected?.id == s.id)
                                 Text(s.bytes.formattedBytes).font(ClearFont.numericSmall).gridColumnAlignment(.trailing)
                                 Text(String(format: "%.0f%%", Double(s.bytes) / Double(max(volume.totalCapacity, 1)) * 100))
                                     .font(ClearFont.numericSmall).foregroundStyle(ClearColor.textTertiary).gridColumnAlignment(.trailing)

@@ -42,8 +42,16 @@ else
   echo "no signing certificate found — ad-hoc signing"
 fi
 
-xcodebuild -project Clear.xcodeproj -scheme Clear -configuration Release \
-  -derivedDataPath build/DerivedData "${sign_args[@]}" build | grep -E "error:|BUILD" || true
+# A failed build must stop here: an older app left in build/ would otherwise be installed.
+mkdir -p build
+log=build/xcodebuild.log
+if ! xcodebuild -project Clear.xcodeproj -scheme Clear -configuration Release \
+  -derivedDataPath build/DerivedData "${sign_args[@]}" build >"$log" 2>&1; then
+  grep -E "error:" "$log" | sort -u | head -40
+  echo "** BUILD FAILED ** (full log: $log)"
+  exit 1
+fi
+grep -E "BUILD" "$log" || true
 app="build/DerivedData/Build/Products/Release/Clear.app"
 [[ -d "$app" ]] || { echo "build failed"; exit 1; }
 rm -rf dist && mkdir -p dist
