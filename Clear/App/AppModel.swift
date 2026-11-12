@@ -168,6 +168,21 @@ final class AppModel {
 
     /// Lists the Trash and opens the normal confirmation flow. Nothing is removed
     /// until the user confirms (with an extra acknowledgement, since it is permanent).
+    /// Items picked in Disk Explorer go to the Trash through the same checks and
+    /// confirmation as any cleanup; protected or in-use ones are shown as blocked.
+    func reviewExplorerItems(_ paths: [String]) {
+        guard !cleanup.isRunning, !paths.isEmpty else { return }
+        Task { @MainActor in
+            let ctx = await makeContext()
+            let candidates = await runOffMain { paths.compactMap { ManualSelection.candidate(path: $0, ctx: ctx) } }
+            guard !candidates.isEmpty else {
+                cleanup.showMessage("선택한 항목을 확인할 수 없습니다. 이미 사라졌거나 심볼릭 링크일 수 있습니다.")
+                return
+            }
+            cleanup.review(title: "디스크 분석", candidates: candidates)
+        }
+    }
+
     func emptyTrash() {
         guard !cleanup.isRunning else { return }
         Task { @MainActor in
@@ -235,6 +250,9 @@ final class AppModel {
         policy.addProtection(GeneralCleanupScanner.defaultAgentScratchRoot.path, scope: .exact, reason: "Claude Code 임시 폴더 자체")
         policy.addAllowedRoots(duplicates.activeRoots)
         policy.addAllowedRoots(largeFiles.activeRoots)
+        // The folder being explored, so items picked there can be moved to the Trash
+        // (never the whole disk: protections alone would then decide).
+        if let root = diskExplorer.rootURL, root.path != "/" { policy.addAllowedRoots([root]) }
         policy.addAllowedRoots([ScreenshotLocator.folder(home: PathUtilities.realHomeDirectory)])
         return policy
     }

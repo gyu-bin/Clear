@@ -124,3 +124,31 @@ struct ProjectActivityTests {
         #expect(build.riskReason.contains("마지막 빌드 40일 전"))
     }
 }
+
+@Suite("Items picked by hand in Disk Explorer")
+struct ManualSelectionTests {
+    @Test("Picked items go to the Trash; protected, outside or in-use ones are blocked")
+    func picks() throws {
+        let temp = try TempDirectory()
+        let env = try FakeEnvironment(temp)
+        let folder = try temp.dir("home/Desktop/Old project")
+        try temp.file("home/Desktop/Old project/a.bin", size: 4096)
+        let ctx = env.context()
+
+        let c = try #require(ManualSelection.candidate(path: folder.path, ctx: ctx))
+        #expect(c.risk == .manual)
+        #expect(!c.allowsPermanentRemoval)
+        #expect(CleanupPlanner(preferTrash: false).makePlan(title: "t", selection: [c]).items.first?.method == .trash)
+
+        // The Desktop folder itself and anything outside allowed roots are refused.
+        #expect(ManualSelection.candidate(path: env.home.appendingPathComponent("Desktop").path, ctx: ctx)?.risk == .blocked)
+        let outside = try temp.dir("elsewhere/x")
+        try temp.file("elsewhere/x/a.bin", size: 10)
+        #expect(ManualSelection.candidate(path: outside.path, ctx: ctx)?.risk == .blocked)
+
+        // A process working inside it blocks it.
+        var processes = ProcessSnapshot()
+        processes.workingDirectories = [(PathUtilities.canonicalPath(folder.path) ?? folder.path).lowercased()]
+        #expect(ManualSelection.candidate(path: folder.path, ctx: env.context(processes: processes))?.risk == .blocked)
+    }
+}

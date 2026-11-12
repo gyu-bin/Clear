@@ -325,3 +325,13 @@ struct DiskTreeScanner: Sendable {
                               restrictedPaths: restricted, totalEntries: visited, finishedAt: Date())
     }
 }
+
+extension DiskNode {
+    /// A real file or folder (not a folded group of small entries, not an unreadable one).
+    var isRemovable: Bool {
+        switch kind {
+        case .directory, .package, .file: true
+        case .symlink, .aggregate, .restricted: false
+        }
+    }
+}

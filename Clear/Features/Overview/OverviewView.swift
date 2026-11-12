@@ -70,6 +70,37 @@ private struct StorageHero: View {
         return [DonutSlice(id: "used", title: "사용 중", bytes: volume.used, color: ClearColor.chart[0]), free]
     }
 
+    /// A legend entry opens its folder in Disk Explorer, where items can be looked
+    /// into and moved to the Trash. Categories with several folders offer a menu.
+    @ViewBuilder private func legendTitle(_ s: DonutSlice) -> some View {
+        let paths = explorablePaths(s.id)
+        let label = Text(s.title).font(ClearFont.callout)
+            .foregroundStyle(selected?.id == s.id ? ClearColor.textPrimary : ClearColor.textSecondary)
+        if paths.count == 1 {
+            Button { explore(paths[0]) } label: { label }
+                .buttonStyle(.plain)
+                .help("디스크 분석에서 열기 — 안을 보고 휴지통으로 옮길 수 있습니다")
+        } else if paths.count > 1 {
+            Menu {
+                ForEach(paths, id: \.self) { path in Button(PathUtilities.abbreviated(path)) { explore(path) } }
+            } label: { label }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("디스크 분석에서 열 폴더 고르기")
+        } else {
+            label
+        }
+    }
+
+    private func explorablePaths(_ id: String) -> [String] {
+        StorageBreakdownScanner.categories(home: PathUtilities.realHomeDirectory, personalFolders: model.settings.overviewFolders)
+            .first { $0.id == id }?.paths.filter { FileManager.default.fileExists(atPath: $0) } ?? []
+    }
+
+    private func explore(_ path: String) {
+        model.selection = .diskExplorer
+        model.diskExplorer.scan(URL(fileURLWithPath: path))
+    }
+
     /// Categories of at least 1 % of the disk get their own slice; the rest are
     /// folded into one "그 밖의 폴더" slice so the legend stays readable.
     /// "시스템 및 기타" is the current used space minus the measured folders, so
@@ -152,8 +183,7 @@ private struct StorageHero: View {
                         ForEach(slices.filter { $0.id != "free" }) { s in
                             GridRow {
                                 RoundedRectangle(cornerRadius: 2).fill(s.color).frame(width: 9, height: 9)
-                                Text(s.title).font(ClearFont.callout)
-                                    .foregroundStyle(selected?.id == s.id ? ClearColor.textPrimary : ClearColor.textSecondary)
+                                legendTitle(s)
                                 Text(s.bytes.formattedBytes).font(ClearFont.numericSmall).gridColumnAlignment(.trailing)
                                 Text(String(format: "%.0f%%", Double(s.bytes) / Double(max(volume.totalCapacity, 1)) * 100))
                                     .font(ClearFont.numericSmall).foregroundStyle(ClearColor.textTertiary).gridColumnAlignment(.trailing)

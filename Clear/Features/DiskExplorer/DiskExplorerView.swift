@@ -162,6 +162,15 @@ private struct Breadcrumbs: View {
                 Text(current.allocatedSize.formattedBytes + (current.isPartial ? "+" : "")).font(ClearFont.numeric)
                 IconButton(symbol: "magnifyingglass", help: "Finder에서 보기") { FinderActions.reveal(current.path) }
             }
+            if let selected = model.selectedNode, selected.isRemovable {
+                Button {
+                    model.environment?.reviewExplorerItems([selected.path])
+                } label: {
+                    Label("\(selected.name) 휴지통으로…", systemImage: "trash").lineLimit(1)
+                }
+                .secondaryButton()
+                .help("선택한 항목을 확인 후 휴지통으로 옮깁니다. 보호된 항목과 사용 중인 항목은 막힙니다.")
+            }
         }
     }
 }
@@ -224,6 +233,10 @@ private struct ChildList: View {
             if let id = ids.first, let child = node.children.first(where: { $0.id == id }) {
                 Button("Finder에서 보기") { FinderActions.reveal(child.path) }
                 Button("경로 복사") { FinderActions.copyPath(child.path) }
+                if child.isRemovable {
+                    Divider()
+                    Button("휴지통으로 이동…") { model.environment?.reviewExplorerItems([child.path]) }
+                }
             }
         } primaryAction: { ids in
             if let id = ids.first, let child = node.children.first(where: { $0.id == id }) { model.enter(child) }
