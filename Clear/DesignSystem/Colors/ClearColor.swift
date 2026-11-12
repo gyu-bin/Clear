@@ -44,6 +44,14 @@ enum ClearColor {
         dynamic(dark: 0xC98A78, light: 0xBE7A66), dynamic(dark: 0x8C97A8, light: 0x8A95A5),
     ]
 
+    /// Extra series colors for charts with more named slices than `chart` covers
+    /// (its last two are reserved for "그 밖의 폴더" and "시스템 및 기타").
+    static let chartMore: [Color] = [
+        dynamic(dark: 0x5E9FC9, light: 0x4C8EBB), dynamic(dark: 0xA9B866, light: 0x96A651),
+        dynamic(dark: 0xB58ACB, light: 0xA477BD), dynamic(dark: 0xD39B6A, light: 0xC88A55),
+    ]
+    static var seriesColors: [Color] { Array(chart.prefix(6)) + chartMore }
+
     static func risk(_ level: RiskLevel) -> Color {
         switch level {
         case .safe: success

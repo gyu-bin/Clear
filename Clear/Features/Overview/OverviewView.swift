@@ -82,8 +82,10 @@ private struct StorageHero: View {
         for item in items {
             let bytes = item.2 ?? 0
             guard bytes > 0 else { continue }
-            if Double(bytes) / total >= 0.01 && result.count < 6 {
-                result.append(DonutSlice(id: item.0, title: item.1, bytes: bytes, color: ClearColor.chart[result.count % 6]))
+            // Up to ten named slices, so swap, /Library and apps do not vanish into "그 밖의 폴더".
+            let palette = ClearColor.seriesColors
+            if Double(bytes) / total >= 0.01 && result.count < palette.count {
+                result.append(DonutSlice(id: item.0, title: item.1, bytes: bytes, color: palette[result.count]))
             } else {
                 small += bytes
             }
