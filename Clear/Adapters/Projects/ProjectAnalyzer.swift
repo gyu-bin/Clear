@@ -133,7 +133,9 @@ struct ProjectAnalyzer: Sendable {
                 subtitle: PathUtilities.abbreviated(target.path, home: ctx.home.path),
                 category: item.role == .dependency ? .projectDependencies : .projectBuild,
                 ruleID: "project.\(item.relativePath)", risk: risk, riskReason: reason, impact: impact,
-                regenerable: true, guards: guards, minimumSize: 1)
+                regenerable: true,
+                guards: item.role == .dependency ? guards : [.pathInUse(PathUtilities.canonicalPath(target.path) ?? target.path)],
+                minimumSize: 1)
             guard let c = ctx.makeCandidate(at: target, root: root, spec: spec) else { continue }
             if item.relativePath == "node_modules/.cache" { cache += 0 } // already inside node_modules
             else {
@@ -205,6 +207,17 @@ struct ProjectAnalyzer: Sendable {
             if taken.contains(where: { PathUtilities.isSameOrDescendant(canonical, of: $0) || PathUtilities.isSameOrDescendant($0, of: canonical) }) { continue }
 
             let isDependency = parts.contains { Self.dependencyNames.contains($0) }
+            // A folder of per-task copies (e.g. .myapp-build/<task>/…): each copy is its
+            // own item, so one task still building does not hold back all the others.
+            // Well-known output folders (dist, build, DerivedData…) stay one item.
+            if !isDependency, !Self.buildNames.contains(name), !name.hasSuffix(".noindex"),
+               let copies = Self.workCopies(in: target.path) {
+                for copy in copies {
+                    if let c = await workCopyCandidate(copy, root: root, path: path, ctx: ctx) { out.append(c) }
+                }
+                taken.append(canonical)
+                continue
+            }
             let isBuild = !isDependency && (parts.contains { Self.buildNames.contains($0) } || name.hasSuffix(".noindex")
                 || ["apk", "aab", "ipa", "xcarchive", "dSYM"].contains((name as NSString).pathExtension))
             let risk: RiskLevel = isBuild ? .review : .manual
@@ -221,7 +234,7 @@ struct ProjectAnalyzer: Sendable {
                 category: isDependency ? .projectDependencies : .projectBuild,
                 ruleID: isDependency ? "project.ignored.dependency" : isBuild ? "project.ignored.build" : "project.ignored.other",
                 risk: risk, riskReason: reason, impact: impact,
-                regenerable: isDependency || isBuild, guards: guards,
+                regenerable: isDependency || isBuild, guards: isDependency ? guards : [.pathInUse(canonical)],
                 preferredMethod: isBuild || isDependency ? .permanent : .trash,
                 allowsPermanentRemoval: isBuild || isDependency,
                 minimumSize: Self.ignoredMinimumSize)
@@ -231,7 +244,7 @@ struct ProjectAnalyzer: Sendable {
                 if await isTrackedByGit(rel, in: path, runner: ctx.commandRunner) {
                     c.risk = .blocked; c.riskReason = "Git이 추적하는 파일이 포함되어 있음"
                 } else if !isDependency, ctx.isDirectory(target),
-                          let secret = Self.findSensitiveFile(in: target.path, forBuildOutput: isBuild) {
+                          let secret = Self.findSensitiveFile(in: target.path, forBuildOutput: isBuild, projectRoot: path) {
                     c.risk = .blocked; c.riskReason = "민감한 파일 포함: \(PathUtilities.abbreviated(secret))"
                 }
             }
@@ -264,7 +277,7 @@ struct ProjectAnalyzer: Sendable {
                 c.riskReason += " · 프로젝트 마지막 작업 \(text)"
             }
         } else {
-            c.riskReason += " · 마지막 빌드 \(text)"
+            c.riskReason += c.ruleID == "project.workCopy" ? " · 마지막 사용 \(text)" : " · 마지막 빌드 \(text)"
         }
     }
 
@@ -303,6 +316,52 @@ struct ProjectAnalyzer: Sendable {
         }
         visit(path, depth: 0)
         return newest
+    }
+
+    // MARK: Per-task work copies
+
+    /// Subfolders of a folder that only holds folders (at least three), e.g. the
+    /// per-task copies build scripts and agents make. nil when it is not such a folder.
+    static func workCopies(in path: String) -> [String]? {
+        guard !isXcodeBuildFolder(path),
+              let names = try? FileManager.default.contentsOfDirectory(atPath: path) else { return nil }
+        var folders: [String] = []
+        var files = 0
+        for name in names where !name.hasPrefix(".") {
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path + "/" + name, isDirectory: &isDir) else { continue }
+            if isDir.boolValue { folders.append(path + "/" + name) } else { files += 1 }
+        }
+        return folders.count >= 3 && files <= 2 ? folders.sorted() : nil
+    }
+
+    func workCopyCandidate(_ copy: String, root: URL, path: String, ctx: ScanContext) async -> CleanupCandidate? {
+        let canonical = PathUtilities.canonicalPath(copy) ?? copy
+        let rel = String(canonical.dropFirst(path.count + 1))
+        let isBuildFolder = Self.isXcodeBuildFolder(canonical)
+        let spec = CandidateSpec(
+            id: "project:\(path)/\(rel)", title: rel,
+            subtitle: PathUtilities.abbreviated(canonical, home: ctx.home.path),
+            category: .projectBuild, ruleID: isBuildFolder ? "project.xcodeBuildFolder" : "project.workCopy",
+            risk: .review,
+            riskReason: isBuildFolder ? "Xcode 빌드 폴더 — 다음 빌드 때 다시 만들어짐"
+                : "작업마다 따로 만든 사본·빌드 — 원본 프로젝트는 그대로",
+            impact: isBuildFolder ? "다음 빌드가 처음부터 다시 수행됩니다."
+                : "휴지통으로 이동합니다. 필요하면 휴지통에서 되돌릴 수 있습니다.",
+            regenerable: isBuildFolder, guards: [.pathInUse(canonical)],
+            preferredMethod: isBuildFolder ? .permanent : .trash,
+            allowsPermanentRemoval: isBuildFolder, minimumSize: Self.ignoredMinimumSize)
+        guard var c = ctx.makeCandidate(at: URL(fileURLWithPath: canonical), root: root, spec: spec) else { return nil }
+        if c.risk != .blocked {
+            if !c.runningGuards.isEmpty {
+                c.risk = .blocked; c.riskReason = "실행 중인 빌드·프로세스가 이 폴더를 쓰고 있음"
+            } else if await isTrackedByGit(rel, in: path, runner: ctx.commandRunner) {
+                c.risk = .blocked; c.riskReason = "Git이 추적하는 파일이 포함되어 있음"
+            } else if let secret = Self.findSensitiveFile(in: canonical, forBuildOutput: isBuildFolder, projectRoot: path) {
+                c.risk = .blocked; c.riskReason = "민감한 파일 포함: \(PathUtilities.abbreviated(secret))"
+            }
+        }
+        return c
     }
 
     // MARK: Build output found by content
@@ -362,7 +421,7 @@ struct ProjectAnalyzer: Sendable {
                     : "빌드한 앱 파일 — 배포·테스트용으로 보관 중인지 확인하세요",
                 impact: isBuildFolder ? "다음 빌드가 처음부터 다시 수행되어 오래 걸릴 수 있습니다."
                     : "휴지통으로 이동합니다. 필요하면 휴지통에서 되돌릴 수 있습니다.",
-                regenerable: isBuildFolder, guards: guards,
+                regenerable: isBuildFolder, guards: [.pathInUse(canonical)],
                 preferredMethod: isBuildFolder ? .permanent : .trash,
                 allowsPermanentRemoval: isBuildFolder,
                 minimumSize: Self.ignoredMinimumSize)
@@ -385,8 +444,19 @@ struct ProjectAnalyzer: Sendable {
     }
 
     /// First secret-looking file found (stops early). Skips installed dependencies.
-    static func findSensitiveFile(in path: String, forBuildOutput: Bool = false) -> String? {
+    /// `projectRoot`: a secret file identical to the one of the same name at the
+    /// project root is a copy (agents copy .env.local into task folders); removing it
+    /// loses nothing.
+    static func findSensitiveFile(in path: String, forBuildOutput: Bool = false, projectRoot: String? = nil) -> String? {
         var found: String?
+        func isCopyOfProjectFile(_ file: String) -> Bool {
+            guard let projectRoot else { return false }
+            let original = projectRoot + "/" + (file as NSString).lastPathComponent
+            guard original != file,
+                  let a = FileManager.default.contents(atPath: original), a.count < 1_000_000,
+                  let b = FileManager.default.contents(atPath: file) else { return false }
+            return a == b
+        }
         try? FTSWalker(root: path).walk { entry in
             let name = (entry.path as NSString).lastPathComponent
             // Installed packages ship public certificates and test keys; they are not the user's secrets.
@@ -399,7 +469,9 @@ struct ProjectAnalyzer: Sendable {
                ["app", "appex", "framework", "xcarchive"].contains((name as NSString).pathExtension) {
                 return .skipDescendants
             }
-            if entry.kind == .file, isSensitive(name, forBuildOutput: forBuildOutput) { found = entry.path; return .stop }
+            if entry.kind == .file, isSensitive(name, forBuildOutput: forBuildOutput), !isCopyOfProjectFile(entry.path) {
+                found = entry.path; return .stop
+            }
             return .continue
         }
         return found

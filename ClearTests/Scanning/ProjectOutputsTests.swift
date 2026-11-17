@@ -248,3 +248,40 @@ struct AsideWorkTests {
         #expect(!report.candidates.contains { $0.path?.hasSuffix("messages.jsonl") == true })
     }
 }
+
+@Suite("Per-task work copies inside a project")
+struct WorkCopyTests {
+    @Test("Each task copy is its own item: busy ones blocked, copied .env files do not block, different ones do")
+    func split() async throws {
+        let temp = try TempDirectory()
+        let env = try FakeEnvironment(temp)
+        let project = try temp.dir("home/Code/App")
+        try temp.dir("home/Code/App/.git")
+        try temp.file("home/Code/App/.env.local", data: Data("KEY=1\n".utf8))
+        let big = 21 * 1024 * 1024
+        for task in ["task-a", "task-b", "task-c"] {
+            try temp.file("home/Code/App/.app-build/\(task)/DerivedData/x.bin", size: big)
+        }
+        try temp.file("home/Code/App/.app-build/task-a/.env.local", data: Data("KEY=1\n".utf8))
+        try temp.file("home/Code/App/.app-build/task-b/.env.local", data: Data("KEY=other\n".utf8))
+
+        let runner = MockCommandRunner(available: [.git]) { tool, args in
+            guard tool == .git else { return CommandResult(exitCode: 1, stdout: "", stderr: "") }
+            if args.contains("--ignored") { return CommandResult(exitCode: 0, stdout: ".app-build/", stderr: "") }
+            return CommandResult(exitCode: 0, stdout: "", stderr: "")
+        }
+        var processes = ProcessSnapshot()
+        let busy = PathUtilities.canonicalPath(project.path)! + "/.app-build/task-c"
+        processes.workingDirectories = [busy.lowercased() + "/derivedData"]
+        let report = await ProjectAnalyzer().analyze(projectAt: project,
+                                                    ctx: env.context(processes: processes, runner: runner, extraRoots: [project]))
+        func item(_ task: String) -> CleanupCandidate? { report.candidates.first { $0.path?.hasSuffix("/.app-build/\(task)") == true } }
+
+        #expect(!report.candidates.contains { $0.path?.hasSuffix("/.app-build") == true })
+        #expect(item("task-a")?.risk == .review)
+        #expect(item("task-a")?.ruleID == "project.workCopy")
+        #expect(item("task-a")?.allowsPermanentRemoval == false)
+        #expect(item("task-b")?.risk == .blocked)
+        #expect(item("task-c")?.risk == .blocked)
+    }
+}

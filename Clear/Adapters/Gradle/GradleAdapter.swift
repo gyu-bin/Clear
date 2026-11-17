@@ -147,6 +147,7 @@ struct GradleAdapter: ToolAdapter {
                 warning: "에뮬레이터 안의 앱 데이터는 복구할 수 없습니다.",
                 minimumSize: 50 * 1024 * 1024, companions: [avdDir.appendingPathComponent(name + ".ini")])
             if var c = ctx.makeCandidate(at: device, root: android, spec: spec) {
+                if !c.runningGuards.isEmpty { c.stopAction = .emulator(avdName: name) }
                 if let last = c.size.newestModification {
                     c.riskReason += " · 마지막 사용 \(GeneralCleanupScanner.idleText(ctx.scannedAt.timeIntervalSince(last)))"
                 }

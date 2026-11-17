@@ -198,6 +198,22 @@ final class AppModel {
         cleanup.review(title: "AI 작업 폴더 정리", candidates: items)
     }
 
+    /// Switches off a running simulator or emulator, then measures developer tools
+    /// again so it can be selected for removal.
+    func stop(_ action: StopAction) {
+        Task { @MainActor in
+            switch action {
+            case .simulator(let udid):
+                guard udid.wholeMatch(of: XcodeAdapter.udidPattern) != nil else { return }
+                _ = try? await commandRunner.run(.xcrun, ["simctl", "shutdown", udid], timeout: 60)
+            case .emulator(let name):
+                _ = await runOffMain { ProcessInspector.terminateEmulators(avdName: name) }
+            }
+            try? await Task.sleep(for: .seconds(3))
+            scanDeveloper()
+        }
+    }
+
     func emptyTrash() {
         guard !cleanup.isRunning else { return }
         Task { @MainActor in

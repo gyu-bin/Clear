@@ -201,6 +201,7 @@ private struct GroupRow: View {
 
 /// One cleanup item with its app icon; expands to show the largest sub-folders.
 private struct ItemRow: View {
+    @Environment(\.appModel) private var model
     let candidate: CleanupCandidate
     @Binding var selection: Set<String>
     @Binding var expanded: Set<String>
@@ -230,6 +231,11 @@ private struct ItemRow: View {
                         .foregroundStyle(idle >= JunkDetailView.idleAge ? ClearColor.textSecondary : ClearColor.textTertiary)
                         .frame(minWidth: 52, alignment: .trailing)
                         .help("마지막 사용(빌드·실행·수정) \(last.formatted(date: .abbreviated, time: .shortened))")
+                }
+                if let action = candidate.stopAction {
+                    Button("끄기") { model.stop(action) }
+                        .buttonStyle(.borderless).font(ClearFont.callout)
+                        .help("실행 중인 시뮬레이터·에뮬레이터를 끕니다. 메모리가 풀리고, 끈 뒤에는 지울 수 있습니다.")
                 }
                 RiskBadge(risk: candidate.risk)
                 Text(candidate.estimatedBytes.formattedBytes).font(ClearFont.numeric).frame(minWidth: 72, alignment: .trailing)

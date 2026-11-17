@@ -69,6 +69,11 @@ struct PathTarget: Hashable, Sendable {
 }
 
 /// A fixed command run through a trusted executable (never via a shell).
+enum StopAction: Hashable, Sendable {
+    case simulator(udid: String)
+    case emulator(avdName: String)
+}
+
 struct TrustedCommand: Hashable, Codable, Sendable {
     let tool: TrustedTool
     let arguments: [String]
@@ -113,6 +118,9 @@ struct CleanupCandidate: Identifiable, Hashable, Sendable {
     var warning: String?
     /// Guards found running at scan time (display only; re-checked at execution).
     var runningGuards: [String] = []
+    /// How to switch the thing off when it is running (a booted simulator, an
+    /// emulator). Stopping frees memory; it can be removed afterwards.
+    var stopAction: StopAction?
 
     var estimatedBytes: Int64 { size.estimatedReclaimable }
     var isDefaultSelected: Bool { risk == .safe && runningGuards.isEmpty }

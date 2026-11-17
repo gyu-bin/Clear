@@ -105,6 +105,30 @@ struct ProcessInspector: ProcessInspecting {
         return snap
     }
 
+    /// Asks the emulator processes of one virtual device to quit (SIGTERM, which
+    /// the emulator handles by shutting down). Returns how many were signalled.
+    @discardableResult
+    static func terminateEmulators(avdName: String) -> Int {
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return 0 }
+        var pids = [pid_t](repeating: 0, count: Int(count) + 64)
+        let filled = pids.withUnsafeMutableBufferPointer {
+            proc_listallpids($0.baseAddress, Int32($0.count * MemoryLayout<pid_t>.size))
+        }
+        var nameBuffer = [CChar](repeating: 0, count: 2 * Int(MAXCOMLEN) + 1)
+        var signalled = 0
+        for pid in pids.prefix(Int(max(filled, 0))) where pid > 0 {
+            guard proc_name(pid, &nameBuffer, UInt32(nameBuffer.count)) > 0 else { continue }
+            let name = String.fromCBuffer(nameBuffer).lowercased()
+            guard name.hasPrefix("qemu-system") || name == "emulator",
+                  let args = arguments(of: pid),
+                  let flag = args.firstIndex(of: "-avd"), args.indices.contains(flag + 1),
+                  args[flag + 1] == avdName else { continue }
+            if kill(pid, SIGTERM) == 0 { signalled += 1 }
+        }
+        return signalled
+    }
+
     /// Current directory of a process. Only readable for the user's own processes.
     static func workingDirectory(of pid: pid_t) -> String? {
         var info = proc_vnodepathinfo()

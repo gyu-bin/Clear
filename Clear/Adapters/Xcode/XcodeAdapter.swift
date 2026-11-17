@@ -165,7 +165,7 @@ struct XcodeAdapter: ToolAdapter {
                 }
                 guard let size, size.allocated > 200 * 1024 * 1024 else { continue }
                 let booted = device.state == "Booted"
-                report.candidates.append(CleanupCandidate(
+                var simulator = CleanupCandidate(
                     id: "simctl:\(device.udid)", title: "\(device.name) (\(runtimeName))",
                     subtitle: "xcrun simctl delete \(device.udid)", category: .simulator, ruleID: "dev.xcode.simulator",
                     risk: booted ? .blocked : .manual,
@@ -177,7 +177,9 @@ struct XcodeAdapter: ToolAdapter {
                     target: .command(TrustedCommand(tool: .xcrun, arguments: ["simctl", "delete", device.udid])),
                     guards: DeveloperGuards.simulator, preferredMethod: .permanent, allowsPermanentRemoval: true,
                     warning: "시뮬레이터 안의 앱 데이터는 복구할 수 없습니다.",
-                    runningGuards: ctx.processes.runningGuards(DeveloperGuards.simulator)))
+                    runningGuards: ctx.processes.runningGuards(DeveloperGuards.simulator))
+                if booted { simulator.stopAction = .simulator(udid: device.udid) }
+                report.candidates.append(simulator)
             }
         }
         if unavailableCount > 0 {
