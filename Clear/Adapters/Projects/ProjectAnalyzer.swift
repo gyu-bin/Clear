@@ -357,11 +357,35 @@ struct ProjectAnalyzer: Sendable {
                 c.risk = .blocked; c.riskReason = "실행 중인 빌드·프로세스가 이 폴더를 쓰고 있음"
             } else if await isTrackedByGit(rel, in: path, runner: ctx.commandRunner) {
                 c.risk = .blocked; c.riskReason = "Git이 추적하는 파일이 포함되어 있음"
-            } else if let secret = Self.findSensitiveFile(in: canonical, forBuildOutput: isBuildFolder, projectRoot: path) {
+            } else if let secret = Self.findSensitiveFile(in: canonical, forBuildOutput: isBuildFolder, projectRoot: path,
+                                                          ignoringEnvFiles: true) {
                 c.risk = .blocked; c.riskReason = "민감한 파일 포함: \(PathUtilities.abbreviated(secret))"
+            } else if let env = Self.findSensitiveFile(in: canonical, forBuildOutput: isBuildFolder, projectRoot: path) {
+                // Only environment files differ from the project's: the user decides,
+                // and it goes to the Trash.
+                let extra = Self.extraEnvKeys(in: env, comparedTo: path + "/" + (env as NSString).lastPathComponent)
+                c.risk = .manual
+                c.riskReason = extra > 0
+                    ? "\((env as NSString).lastPathComponent)에 원본 프로젝트에 없는 설정 \(extra)개 — 필요한 값은 먼저 옮겨 두세요"
+                    : "\((env as NSString).lastPathComponent) 내용이 원본 프로젝트와 다름 — 확인 후 선택하세요"
+                c.allowsPermanentRemoval = false
+                c.preferredMethod = .trash
             }
         }
         return c
+    }
+
+    /// How many setting names an env file has that the original lacks (values are never read out).
+    static func extraEnvKeys(in file: String, comparedTo original: String) -> Int {
+        func keys(_ path: String) -> Set<String> {
+            guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return [] }
+            return Set(text.split(whereSeparator: \.isNewline).compactMap { line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.hasPrefix("#"), let eq = trimmed.firstIndex(of: "=") else { return nil }
+                return String(trimmed[..<eq]).replacingOccurrences(of: "export ", with: "").trimmingCharacters(in: .whitespaces)
+            })
+        }
+        return keys(file).subtracting(keys(original)).count
     }
 
     // MARK: Build output found by content
@@ -447,7 +471,13 @@ struct ProjectAnalyzer: Sendable {
     /// `projectRoot`: a secret file identical to the one of the same name at the
     /// project root is a copy (agents copy .env.local into task folders); removing it
     /// loses nothing.
-    static func findSensitiveFile(in path: String, forBuildOutput: Bool = false, projectRoot: String? = nil) -> String? {
+    /// Generated folders inside a copy: their databases and profiles are build caches.
+    static let generatedFolderNames: Set<String> = ["DerivedData", "build", "Build", ".build", ".gradle", ".cxx"]
+
+    static func isEnvFile(_ name: String) -> Bool { name == ".env" || name.hasPrefix(".env.") }
+
+    static func findSensitiveFile(in path: String, forBuildOutput: Bool = false, projectRoot: String? = nil,
+                                  ignoringEnvFiles: Bool = false) -> String? {
         var found: String?
         func isCopyOfProjectFile(_ file: String) -> Bool {
             guard let projectRoot else { return false }
@@ -464,12 +494,16 @@ struct ProjectAnalyzer: Sendable {
                dependencyNames.contains(name) || name == "site-packages" || (forBuildOutput && buildDependencyNames.contains(name)) {
                 return .skipDescendants
             }
+            if entry.kind == .directoryPre, entry.level > 0, generatedFolderNames.contains(name) || name.hasSuffix(".noindex") {
+                return .skipDescendants
+            }
             // Built app bundles carry a copy of their provisioning profile; not a source secret.
             if entry.kind == .directoryPre, entry.level > 0,
                ["app", "appex", "framework", "xcarchive"].contains((name as NSString).pathExtension) {
                 return .skipDescendants
             }
-            if entry.kind == .file, isSensitive(name, forBuildOutput: forBuildOutput), !isCopyOfProjectFile(entry.path) {
+            if entry.kind == .file, isSensitive(name, forBuildOutput: forBuildOutput), !isCopyOfProjectFile(entry.path),
+               !(ignoringEnvFiles && isEnvFile(name)) {
                 found = entry.path; return .stop
             }
             return .continue

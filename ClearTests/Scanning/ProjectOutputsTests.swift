@@ -263,7 +263,9 @@ struct WorkCopyTests {
             try temp.file("home/Code/App/.app-build/\(task)/DerivedData/x.bin", size: big)
         }
         try temp.file("home/Code/App/.app-build/task-a/.env.local", data: Data("KEY=1\n".utf8))
-        try temp.file("home/Code/App/.app-build/task-b/.env.local", data: Data("KEY=other\n".utf8))
+        try temp.file("home/Code/App/.app-build/task-b/.env.local", data: Data("KEY=other\nRELEASE_TOKEN=x\n".utf8))
+        // Build caches inside a copy do not block it.
+        try temp.file("home/Code/App/.app-build/task-a/DerivedData/XCBuildData/build.db", size: 100)
 
         let runner = MockCommandRunner(available: [.git]) { tool, args in
             guard tool == .git else { return CommandResult(exitCode: 1, stdout: "", stderr: "") }
@@ -281,7 +283,10 @@ struct WorkCopyTests {
         #expect(item("task-a")?.risk == .review)
         #expect(item("task-a")?.ruleID == "project.workCopy")
         #expect(item("task-a")?.allowsPermanentRemoval == false)
-        #expect(item("task-b")?.risk == .blocked)
+        // A different .env file: the user decides, Trash only, told how many settings are extra.
+        #expect(item("task-b")?.risk == .manual)
+        #expect(item("task-b")?.riskReason.contains("원본 프로젝트") == true)
+        #expect(item("task-b")?.allowsPermanentRemoval == false)
         #expect(item("task-c")?.risk == .blocked)
     }
 }
