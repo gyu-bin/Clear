@@ -178,6 +178,10 @@ struct SharedTempTests {
         try temp.file("sharedtmp/shell-cwd/a.bin", size: big, modified: old)
         try temp.file("sharedtmp/small/a.bin", size: 1024, modified: old)
         try temp.file("sharedtmp/claude-501/p/s/a.bin", size: big, modified: old)
+        // Another app's lock: an empty folder nobody can read.
+        let lock = try temp.dir("sharedtmp/devio_semaphore_app")
+        try FileManager.default.setAttributes([.posixPermissions: 0o022], ofItemAtPath: lock.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: lock.path) }
 
         var scanner = GeneralCleanupScanner()
         scanner.includeLeftovers = false
@@ -208,6 +212,7 @@ struct SharedTempTests {
         #expect(byName["shell-cwd"]?.risk == .blocked)
         #expect(byName["shell-cwd"]?.riskReason == "실행 중인 프로세스가 이 폴더를 쓰고 있음")
         #expect(byName["small"] == nil)
+        #expect(byName["devio_semaphore_app"] == nil)
         #expect(byName["claude-501"] == nil)
         #expect(!items.contains { $0.isDefaultSelected })
 

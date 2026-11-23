@@ -230,7 +230,8 @@ struct GeneralCleanupScanner: Sendable {
                     impact: "세션이 만든 복사본·빌드·실험 데이터가 사라집니다. 대화 기록(~/.claude)과 프로젝트 파일은 그대로입니다.",
                     regenerable: false, preferredMethod: .trash, allowsPermanentRemoval: true,
                     minimumSize: 10 * 1024 * 1024)
-                guard var c = ctx.makeCandidate(at: session, root: base, spec: spec) else { continue }
+                guard var c = ctx.makeCandidate(at: session, root: base, spec: spec),
+                      c.size.allocated >= spec.minimumSize else { continue }
                 let newest = c.size.newestModification ?? c.lastModified
                 if c.risk != .blocked, newest.map({ ctx.scannedAt.timeIntervalSince($0) < 86_400 }) ?? true {
                     c.risk = .blocked
@@ -265,7 +266,11 @@ struct GeneralCleanupScanner: Sendable {
                 regenerable: kind.regenerable, guards: [.pathInUse(canonicalChild)],
                 preferredMethod: kind.allowsPermanentRemoval ? .permanent : .trash,
                 allowsPermanentRemoval: kind.allowsPermanentRemoval, minimumSize: sharedTempMinimum)
-            guard var c = ctx.makeCandidate(at: child, root: base, spec: spec) else { continue }
+            // An unreadable entry passes makeCandidate's size filter so it can be reported,
+            // but here it is another app's lock (Logi Options+ keeps mode-000-style
+            // semaphore folders in /tmp): nothing to gain, and it cannot be removed.
+            guard var c = ctx.makeCandidate(at: child, root: base, spec: spec),
+                  c.size.allocated >= sharedTempMinimum else { continue }
             let newest = c.size.newestModification ?? c.lastModified
             let idle = newest.map { ctx.scannedAt.timeIntervalSince($0) }
             if c.risk != .blocked {
@@ -366,7 +371,8 @@ struct GeneralCleanupScanner: Sendable {
                     impact: "세션의 작업 사본과 빌드가 사라집니다. 대화 기록과 결과물(artifacts)은 그대로입니다.",
                     regenerable: false, guards: [.pathInUse(canonicalWork)], preferredMethod: .trash,
                     allowsPermanentRemoval: !containsGit, minimumSize: 50 * 1024 * 1024)
-                guard var c = ctx.makeCandidate(at: work, root: base, spec: spec) else { continue }
+                guard var c = ctx.makeCandidate(at: work, root: base, spec: spec),
+                      c.size.allocated >= spec.minimumSize else { continue }
                 let idle = (c.size.newestModification ?? c.lastModified).map { ctx.scannedAt.timeIntervalSince($0) }
                 if c.risk != .blocked {
                     if !c.runningGuards.isEmpty {
